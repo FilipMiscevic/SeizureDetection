@@ -27,7 +27,7 @@ from feature_extraction import extract_frames
 # -
 
 class ChbDataset(Dataset):
-    def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',seizures_only=True,sample_rate=256,subject='chb01'):
+    def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',seizures_only=True,sample_rate=256,subject='chb01',mode='train'):
         'Initialization'
         self.sample_rate = sample_rate
         self.data_dir = data_dir
@@ -43,6 +43,11 @@ class ChbDataset(Dataset):
             
         #filter based on subject
         self.records = [record for record in self.records if subject in record]
+        
+        if mode == 'train':
+            self.records = self.records[:int(4*len(self.records)/5)]
+        elif mode == 'test':
+            self.records = self.records[int(4*len(self.records)/5):]
             
     def __len__(self):
         'Denotes the total number of samples'
@@ -60,7 +65,9 @@ class ChbDataset(Dataset):
         for i in np.arange(n):
                 sigbufs[i, :] = f.readSignal(i)
                 
-        #get labels if seizure. TODO: deal with multiple seizures
+        labels = np.zeros((1, f.getNSamples()[0]))
+        
+       #get labels if seizure. TODO: deal with multiple seizures
         if file_name in self.labelled:
             with open(self.data_dir + file_name.split('/')[0] + '/' + file_name.split('/')[0] + '-summary.txt') as g:
                 lines = g.readlines()
@@ -76,15 +83,12 @@ class ChbDataset(Dataset):
                         if i == 5:
                             self.seizure_end   = int(line.split(' ')[3])   
                             i = 0
-                            found = False
+                            found  = False        
+                            start  = self.sample_rate * self.seizure_start
+                            end    = self.sample_rate * self.seizure_end
+                            labels[:,start:end] = 1.0
                         i += 1
                 f.close()
-
-        labels = np.zeros((1, f.getNSamples()[0]))
-        start  = self.sample_rate * self.seizure_start
-        end    = self.sample_rate * self.seizure_end
-                
-        labels[:,start:end] = 1.0
         
         s       = 2 #window in seconds
         #print(sigbufs.shape,-sigbufs.shape[1]%(s*self.sample_rate))
@@ -115,8 +119,13 @@ class ChbDataset(Dataset):
         return np.concatenate(np.array(allX)),np.concatenate(np.array(allY))
 
 
-dataset = ChbDataset()
-allX,allY = dataset.all_data()
+train_dataset = ChbDataset(mode='train')
+test_dataset  = ChbDataset(mode='test')
+all_dataset   = ChbDataset(mode='all')
+
+assert len(train_dataset.records)+len(test_dataset.records)==len(all_dataset.records)
+
+allX,allY = train_dataset.all_data()
 
 # +
 model = XGBClassifier(objective='binary:hinge', learning_rate = 0.1,
@@ -124,7 +133,7 @@ model = XGBClassifier(objective='binary:hinge', learning_rate = 0.1,
 
 model.fit(allX, allY)
 
-for test in ChbDataset():
+for test in test_dataset:
     preds = model.predict(test[0])
     print(sum(preds==test[1])/len(test[1]))
 # -
