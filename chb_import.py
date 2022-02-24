@@ -6,13 +6,14 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.13.7
+#       jupytext_version: 1.13.2
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
 #     name: python3
 # ---
 
+# +
 from torch.utils.data import Dataset
 import pyedflib
 import numpy as np
@@ -20,9 +21,13 @@ from scipy.signal import spectrogram, welch
 from xgboost import XGBClassifier, plot_tree
 from sklearn import metrics
 
+from feature_extraction import extract_frames
+
+
+# -
 
 class ChbDataset(Dataset):
-    def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',seizures_only=True,sample_rate=256):
+    def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',seizures_only=True,sample_rate=256,subject='chb01'):
         'Initialization'
         self.sample_rate = sample_rate
         self.data_dir = data_dir
@@ -35,6 +40,9 @@ class ChbDataset(Dataset):
         with open(self.data_dir+'RECORDS-WITH-SEIZURES') as f:
             self.labelled = f.read().strip().splitlines()
             f.close()
+            
+        #filter based on subject
+        self.records = [record for record in self.records if subject in record]
             
     def __len__(self):
         'Denotes the total number of samples'
@@ -99,22 +107,22 @@ class ChbDataset(Dataset):
         x = x.reshape((x.shape[0],x.shape[1]*x.shape[2]))
         
         return x,np.array(labels)
+    
+    def all_data(self):
+        data = [self.__getitem__(i) for i in range(len(self.records))]
+        allX = [x[0] for x in data]
+        allY = [x[1] for x in data]
+        return np.concatenate(np.array(allX)),np.concatenate(np.array(allY))
 
 
-# +
 dataset = ChbDataset()
-
-train = dataset.__getitem__(0)
-test = dataset.__getitem__(1)
-
-x = np.array(train[0])
-labels = train[1]
+allX,allY = dataset.all_data()
 
 # +
 model = XGBClassifier(objective='binary:hinge', learning_rate = 0.1,
               max_depth = 1, n_estimators = 330)
 
-model.fit(train[0], train[1])
+model.fit(allX, allY)
 
 for test in ChbDataset():
     preds = model.predict(test[0])
