@@ -13,7 +13,6 @@
 #     name: python3
 # ---
 
-# +
 from torch.utils.data import Dataset
 import pyedflib
 import numpy as np
@@ -21,13 +20,11 @@ from scipy.signal import spectrogram, welch
 from xgboost import XGBClassifier, plot_tree
 from sklearn import metrics
 
-from feature_extraction import extract_frames
 
-
-# -
-
+# +
 class ChbDataset(Dataset):
-    def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',seizures_only=True,sample_rate=256,subject='chb01',mode='train'):
+    def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',
+                 seizures_only=True,sample_rate=256,subject='chb01',mode='train'):
         'Initialization'
         self.sample_rate = sample_rate
         self.data_dir = data_dir
@@ -117,25 +114,39 @@ class ChbDataset(Dataset):
         allX = [x[0] for x in data]
         allY = [x[1] for x in data]
         return np.concatenate(np.array(allX)),np.concatenate(np.array(allY))
-
-
-train_dataset = ChbDataset(mode='train')
-test_dataset  = ChbDataset(mode='test')
-all_dataset   = ChbDataset(mode='all')
-
-assert len(train_dataset.records)+len(test_dataset.records)==len(all_dataset.records)
-
-allX,allY = train_dataset.all_data()
-
-# +
-model = XGBClassifier(objective='binary:hinge', learning_rate = 0.1,
+    
+class XGBoostTrainer:
+    def __init__(self):
+        self.model = XGBClassifier(objective='binary:hinge', learning_rate = 0.1,
               max_depth = 1, n_estimators = 330)
+        self.subjects = ['chb0'+str(i) for i in range(4,10)] + ['chb' + str(i) for i in range(10,25)]
+        self.preds = []
+        self.labels = []
+        
+    def train_all(self):
+        
+        for subject in self.subjects:
+            print('Training ' + subject)
+            train = ChbDataset(mode='train',subject=subject)
+            tests = ChbDataset(mode='test' ,subject=subject)
+        
+            allX,allY = train.all_data()
+            
+            self.model.fit(allX, allY)
 
-model.fit(allX, allY)
+            for test in tests:
+                preds = self.model.predict(test[0])
+                self.preds.append((preds))
+                self.labels.append(test[1])
+                
+                print(sum(preds==test[1])/len(test[1]))
+        
 
-for test in test_dataset:
-    preds = model.predict(test[0])
-    print(sum(preds==test[1])/len(test[1]))
+
 # -
+
+m = XGBoostTrainer()
+m.train_all()
+
 
 
