@@ -56,11 +56,15 @@ class ChbDataset(Dataset):
         file_name = self.records[index]
         
         f = pyedflib.EdfReader(self.data_dir+file_name)
-        n = f.signals_in_file
+        n = 23 #f.signals_in_file
         signal_labels = f.getSignalLabels()
         sigbufs = np.zeros((n, f.getNSamples()[0]))
         for i in np.arange(n):
-                sigbufs[i, :] = f.readSignal(i)
+                try:
+                    sigbufs[i, :] = f.readSignal(i)
+                except Exception as e:
+                    sigbufs[i, :] = np.zeros(f.getNSamples()[0])
+        f.close()
                 
         labels = np.zeros((1, f.getNSamples()[0]))
         
@@ -76,16 +80,15 @@ class ChbDataset(Dataset):
                         found = True
                     if found:
                         if i == 4:
-                            self.seizure_start = int(line.split(' ')[3])
+                            self.seizure_start = int(line.split(' ')[-2])
                         if i == 5:
-                            self.seizure_end   = int(line.split(' ')[3])   
+                            self.seizure_end   = int(line.split(' ')[-2])   
                             i = 0
                             found  = False        
                             start  = self.sample_rate * self.seizure_start
                             end    = self.sample_rate * self.seizure_end
                             labels[:,start:end] = 1.0
-                        i += 1
-                f.close()
+                        i += 1            
         
         s       = 2 #window in seconds
         #print(sigbufs.shape,-sigbufs.shape[1]%(s*self.sample_rate))
@@ -107,19 +110,24 @@ class ChbDataset(Dataset):
         x = np.array(all_X)
         x = x.reshape((x.shape[0],x.shape[1]*x.shape[2]))
         
+        #print(signal_labels)
+        
         return x,np.array(labels)
     
     def all_data(self):
         data = [self.__getitem__(i) for i in range(len(self.records))]
-        allX = [x[0] for x in data]
-        allY = [x[1] for x in data]
-        return np.concatenate(np.array(allX)),np.concatenate(np.array(allY))
-    
+        allY = np.concatenate([x[1] for x in data])
+        
+        #[print(x[0].shape) for x in data]
+        allX = np.concatenate([x[0] for x in data])
+        return allX,allY
+
+
 class XGBoostTrainer:
     def __init__(self):
         self.model = XGBClassifier(objective='binary:hinge', learning_rate = 0.1,
               max_depth = 1, n_estimators = 330)
-        self.subjects = ['chb0'+str(i) for i in range(4,10)] + ['chb' + str(i) for i in range(10,25)]
+        self.subjects = ['chb0'+str(i) for i in range(1,10)] + ['chb' + str(i) for i in range(10,25)]
         self.preds = []
         self.labels = []
         
@@ -140,13 +148,44 @@ class XGBoostTrainer:
                 self.labels.append(test[1])
                 
                 print(sum(preds==test[1])/len(test[1]))
-        
-
-
+    
+    
 # -
 
 m = XGBoostTrainer()
 m.train_all()
 
+# +
+from sklearn.metrics import confusion_matrix, plot_confusion_matrix, roc_curve, ConfusionMatrixDisplay, RocCurveDisplay,roc_auc_score, f1_score,classification_report
+#import seaborn as sn
+import pandas as pd
+import matplotlib.pyplot as plt
+
+y_true = np.concatenate(m.labels)
+y_pred_class = np.concatenate(m.preds)
+
+y_pred_null = np.zeros_like(y_pred_class)
+
+cm = confusion_matrix(y_true, y_pred_class)
+cm2 = confusion_matrix(y_true, y_pred_null)
+tn, fp, fn, tp = cm.ravel()
+
+cm_display = ConfusionMatrixDisplay(cm).plot()
+cm_display2 = ConfusionMatrixDisplay(cm2).plot()
+
+# +
+#fpr, tpr, _ = roc_curve(y_true, y_pred_class)#, pos_label=m.model.classes_[1])
+#roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
+
+r = roc_auc_score(y_true,y_pred_class)
+r2 = roc_auc_score(y_true,y_pred_null)
+print(r,r2)
+
+fpr = fp/(fp+tn)
+print("False positives per day: " + str(fpr/((fp+tn)/256/60)*24))
+# -
+
+print(classification_report(y_true,y_pred_class))
+print(classification_report(y_true,y_pred_null))
 
 
