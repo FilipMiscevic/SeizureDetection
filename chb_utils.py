@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 import re
+import random
+import math
 
 
 class Seizure:
@@ -77,3 +79,41 @@ def parse_summary_file(file):
             chbfiles.append(ChbFile(fileid, start_time, end_time, seizures))
         print(f"Files {chbfiles}")
         return chbfiles
+
+
+# +
+def train_test_split(recordsfile, train_out="TRAIN_RECORDS.txt", test_out="TEST_RECORDS.txt"):
+    random.seed(144)
+    with open(recordsfile, 'r') as f:
+        lines = f.readlines()
+    subj_to_file = {}
+    for line in lines:
+        subject = line.strip().split('/')[0]
+        if subject == '':
+            continue
+        if subject not in subj_to_file:
+            subj_to_file[subject] = []
+        subj_to_file[subject].append(line)
+    for subject, files in subj_to_file.items():
+        assert len(files) > 1, f"Subject {subject} has < 2 seizure files"
+        random.shuffle(files)
+        num_test = math.ceil(len(files)/5)
+        test_files = files[0:num_test]
+        train_files = files[num_test:]
+        print(f"Writing {len(train_files)} files to {train_out}")
+        with open(train_out, 'a') as f:
+            for file in train_files:
+                f.write(file)
+        print(f"Writing {len(test_files)} files to {test_out}")
+        with open(test_out, 'a') as f:
+            for file in test_files:
+                f.write(file)
+            
+        
+# -
+
+train_test_split('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/RECORDS-WITH-SEIZURES')
+
+
+
+
