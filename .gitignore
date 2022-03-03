@@ -2,3 +2,5 @@ chb-mit-scalp-eeg-database-1.0.0
 .ipynb_checkpoints
 seizure-prediction
 *.mat
+*.pyc
+.ipynb_checkpoints/chb_import-checkpoint.ipynb
