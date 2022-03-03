@@ -2,6 +2,9 @@ from datetime import datetime, timedelta
 import re
 import random
 import math
+import pyedflib
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 class Seizure:
@@ -62,26 +65,34 @@ def parse_summary_file(file):
         print(f"channels: {channels}")
 
         # file names and seizure times
-        file_re = re.compile("File Name: (.+)\nFile Start Time: (\d?\d:\d\d:\d\d)\nFile End Time: (\d?\d:\d\d:\d\d)\nNumber of Seizures in File: (\d+)\n(Seizure Start Time: (\d+) seconds\nSeizure End Time: (\d+) seconds\n)*")
-        matches = file_re.findall(content)
+        file_re_no_capture = re.compile("File Name: .+\nFile Start Time: \d?\d:\d\d:\d\d\nFile End Time: \d?\d:\d\d:\d\d\nNumber of Seizures in File: \d+\n[Seizure \d\s?Start Time: \d+ seconds\nSeizure \d*\s?End Time: \d+ seconds\n]*")
+        file_re = re.compile("File Name: (.+)\nFile Start Time: (\d?\d:\d\d:\d\d)\nFile End Time: (\d?\d:\d\d:\d\d)\nNumber of Seizures in File: (\d+)\n(Seizure \d\s?Start Time: (\d+) seconds\nSeizure \d*\s?End Time: (\d+) seconds\n)*")
+        matches = file_re_no_capture.findall(content)
         print(f"found {len(matches)} edf files")
         for match in matches:
-            fileid = match[0]
-            start_time = match[1]
-            end_time = match[2]
-            num_seizures = int(match[3])
+            groups = file_re.match(match).groups()
+            print(match)
+            print(groups)
+            fileid = groups[0]
+            start_time = groups[1]
+            end_time = groups[2]
+            num_seizures = int(groups[3])
             seizures = []
             if num_seizures > 0:
-                ind = 4
-                for i in range(num_seizures):
-                    seizures.append(Seizure(match[ind+1], match[ind+2]))
-                    ind = ind + 3
+                seizure_re = re.compile("Seizure \d\s?Start Time: (\d+) seconds\nSeizure \d*\s?End Time: (\d+) seconds\n")
+                seizures = seizure_re.findall(match)
+                print(seizures)
+                assert len(seizures) == num_seizures
+                for start, end in seizures:
+                    seizures.append(Seizure(start, end))
             chbfiles.append(ChbFile(fileid, start_time, end_time, seizures))
         print(f"Files {chbfiles}")
         return chbfiles
 
 
-# +
+parse_summary_file('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/chb16/chb16-summary.txt')
+
+
 def train_test_split(recordsfile, train_out="TRAIN_RECORDS.txt", test_out="TEST_RECORDS.txt"):
     random.seed(144)
     with open(recordsfile, 'r') as f:
@@ -108,12 +119,35 @@ def train_test_split(recordsfile, train_out="TRAIN_RECORDS.txt", test_out="TEST_
         with open(test_out, 'a') as f:
             for file in test_files:
                 f.write(file)
-            
-        
-# -
+
 
 train_test_split('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/RECORDS-WITH-SEIZURES')
 
 
+def read_edf_file(file_name, sample_length=5):
+    with pyedflib.EdfReader(file_name) as f:
+        n = f.signals_in_file
+        print(f"{n} signals in file {file_name}")
+        print(f"length of file: {f.file_duration}")
+        print(f"annotations in file: {f.annotations_in_file}")
+        sample_rate = f.getSampleFrequencies()[0]
+        print(f"sample rate: {sample_rate}")
+        size = sample_length * sample_rate
+        # chose random starting point
+        start_point = random.randrange(0, f.file_duration*sample_rate - size)
+        channel_data = []
+        for channel in range(n):
+            data = f.readSignal(channel, start_point, size)
+            channel_data.append(data)
+        
+        plt.figure(figsize=(12, 5))
+        for i, d in enumerate(channel_data):
+            plt.plot(d, label=f"{i}")
+        plt.show()
+        
 
 
+read_edf_file('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/chb01/chb01_18.edf')
+
+# + active=""
+#
