@@ -18,7 +18,6 @@ import torch.nn
 import pyedflib
 import numpy as np
 from scipy.signal import spectrogram, welch
-from xgboost import XGBClassifier, plot_tree
 import matplotlib.pyplot as plt
 import re
 from datetime import datetime, timedelta
@@ -34,7 +33,8 @@ class ChbAutoencoderDataset(Dataset):
             sample_rate=256,
             sample_length=5, # in seconds
             exclude_test=True,
-            extract_features=False):
+            extract_features=False,
+            normalize=True):
         # Initialization
         self.sample_rate = sample_rate
         self.sample_length = sample_length
@@ -42,6 +42,8 @@ class ChbAutoencoderDataset(Dataset):
         self.record_type = 'RECORDS-WITH-SEIZURES' if seizures_only else 'RECORDS'
         self.exclude_test = exclude_test
         self.extract_features = extract_features
+        self.normalize = normalize    
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
                 
         with open(self.data_dir+self.record_type) as f:
             self.records = f.read().strip().splitlines()
@@ -64,15 +66,14 @@ class ChbAutoencoderDataset(Dataset):
         file_name = self.records[index]
         
         with pyedflib.EdfReader(os.path.join(self.data_dir, file_name)) as f:
-            n = f.signals_in_file
-            # choose one channel
-            channel = random.randrange(0, n)
-
-            # chose random starting point
-            size = self.sample_length * self.sample_rate
-            start_point = random.randrange(0, f.file_duration*self.sample_rate - size)
-
-            sample = f.readSignal(channel, start_point, size)
+            sample = self.__read_random_sample(f)
+            while np.count_nonzero(sample) < 0.5 * len(sample):
+                print("Skipping zero sample")
+                sample = self.__read_random_sample(f)
+                
+        
+        if self.normalize:
+            sample = self.__normalize(sample)
         
         if self.extract_features:
             features = self.__welch_features(sample)
@@ -80,24 +81,29 @@ class ChbAutoencoderDataset(Dataset):
         
         return torch.Tensor(sample)
     
+    def __read_random_sample(self, f):
+        n = f.signals_in_file
+        # choose one channel
+        channel = random.randrange(0, n)
+
+        # chose random starting point
+        size = self.sample_length * self.sample_rate
+        start_point = random.randrange(0, f.file_duration*self.sample_rate - size)
+
+        return f.readSignal(channel, start_point, size)
+    
     def __welch_features(self, sample):
         p_f, p_Sxx = welch(sample, fs=dataset.sample_rate, axis=1)
         p_SS = np.log1p(p_Sxx)
         arr = p_SS[:] / np.max(p_SS)
         return arr
-
-# +
+    
+    def __normalize(self, sample):
+        mean = np.mean(sample)
+        return sample - mean
 
 data_dir = os.path.expanduser('~/data/chb-mit-scalp-eeg-database-1.0.0/')
-data_dir
-
-# +
-dataset = ChbAutoencoderDataset(data_dir=data_dir)
-
-train = dataset[0]
-train[0].shape
-# -
-
+dataset = ChbAutoencoderDataset(data_dir=data_dir, normalize=False)
 loader = DataLoader(dataset, batch_size=10)
 
 
@@ -114,7 +120,6 @@ class Autoencoder(torch.nn.Module):
         self.layer_sizes = layer_sizes
         self.encoder = self.__create_encoder()
         self.decoder = self.__create_decoder()
-        nn.init.uniform_(layer_1.weight, -1/sqrt(5), 1/sqrt(5))
         
     def __create_encoder(self):
         sizes = [self.input_size] + self.layer_sizes
@@ -144,31 +149,35 @@ class Autoencoder(torch.nn.Module):
         return decoded
 
 
-test_init = Autoencoder((1000,))
-test_init.encoder[0].weight
-
 # +
-
 # Model Initialization
 input_shape = 1280
 model = Autoencoder(input_shape=(input_shape,), num_layers=4, layer_sizes=[1024, 1024, 512, 512])
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
+model.to(device)
   
 # Validation using MSE Loss function
 loss_function = torch.nn.MSELoss()
   
 # Using an Adam Optimizer with lr = 0.1
 optimizer = torch.optim.Adam(model.parameters(),
-                             lr = 1e-1,
-                             weight_decay = 1e-8)
+                             lr = 1e-4)
+# -
 
-# +
-epochs = 100
 outputs = []
 avg_epoch_losses = []
-for epoch in range(epochs):
-    random.seed(100)
+
+import time
+epochs = 10000
+run_name = 'basic_autoencoder_1024_1024_512_512'
+model.load_state_dict(torch.load(f"runs/{run_name}_epoch1000.state"))
+for epoch in range(1000, epochs + 1):
+    start_time = time.time()
+    # random.seed(100)
     epoch_loss = []
     for sample in loader:
+        sample = sample.to(device)
 
         # Output of Autoencoder
         reconstructed = model(sample)
@@ -184,25 +193,27 @@ for epoch in range(epochs):
         optimizer.step()
 
         # Storing the losses in a list for plotting
-        epoch_loss.append(loss.detach().numpy())
+        epoch_loss.append(loss.detach().cpu().numpy())
 
-    outputs.append((epoch, sample.detach().numpy(), reconstructed.detach().numpy()))
+    outputs.append((epoch, sample.detach().cpu().numpy(), reconstructed.detach().cpu().numpy()))
     avg_epoch_losses.append(np.mean(epoch_loss))
-    print(f"done with epoch {epoch} (loss: {avg_epoch_losses[-1]})")
-  
+    print(f"epoch {epoch} (loss: {avg_epoch_losses[-1]}) took {time.time() - start_time} seconds")
+    if epoch % 100 == 0:
+        torch.save(model.state_dict(), f"runs/{run_name}_epoch{epoch}.state")
+
+
+wrong_outputs = outputs
+outputs = wrong_outputs[0:1000] + wrong_outputs[9000:]
 # Defining the Plot Style
-plt.style.use('fivethirtyeight')
 plt.xlabel('epochs')
 plt.ylabel('Average Loss')
 plt.plot(avg_epoch_losses)
-# -
 
-for i in range(9, len(outputs), 10):
+for i in range(9900, len(outputs), 1):
     epoch, sample, reconstruction = outputs[i]
     print(f"Epoch {epoch}")
-    plt.plot(sample[1])
-    plt.show()
-    plt.plot(reconstruction[1])
+    plt.plot(sample[0])
+    plt.plot(reconstruction[0], color="orange")
     plt.show()
 
 
