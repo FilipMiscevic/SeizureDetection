@@ -205,9 +205,11 @@ for epoch in range(1000, epochs + 1):
 wrong_outputs = outputs
 outputs = wrong_outputs[0:1000] + wrong_outputs[9000:]
 # Defining the Plot Style
-plt.xlabel('epochs')
-plt.ylabel('Average Loss')
+plt.figure(figsize=(12, 5))
+plt.xlabel('Epochs')
+plt.ylabel('Average Training Loss')
 plt.plot(avg_epoch_losses)
+plt.savefig(f"average_losses_{run_name}.png")
 
 for i in range(9900, len(outputs), 1):
     epoch, sample, reconstruction = outputs[i]
