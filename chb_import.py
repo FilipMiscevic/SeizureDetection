@@ -19,7 +19,7 @@ import numpy as np
 from scipy.signal import spectrogram, welch
 from xgboost import XGBClassifier, plot_tree
 from sklearn import metrics
-from chb_utils import parse_summary_file
+from chb_utils import parse_summary_file, parse_summary_file_chb24
 import os
 import random
 
@@ -94,14 +94,21 @@ class ChbDataset(Dataset):
             self.data_dir,
             self.subject,
             f"{self.subject}-summary.txt")
-        all_records = parse_summary_file(summary_file)
+        if self.subject == 'chb24':
+            all_records = parse_summary_file_chb24(summary_file)
+        else:
+            all_records = parse_summary_file(summary_file)
         num_channels = all_records[0].num_channels
         for record in all_records:
             assert record.num_channels == num_channels, f"Expected {num_channels} channels, found {record.num_channels}"
             if f"{self.subject}/{record.fileid}" in self.records:
                 filename = os.path.join(self.data_dir, self.subject, record.fileid)
                 prev_end = 0
-                end_of_file = int(record.duration.total_seconds()) * self.sample_rate
+                if record.duration is None:
+                    duration = self.get_record_duration(filename)
+                else:
+                    duration = int(record.duration.total_seconds())
+                end_of_file = duration * self.sample_rate
                 if len(record.seizures) > 0:
                     seizures = []
                     for seizure in record.seizures:
@@ -119,6 +126,11 @@ class ChbDataset(Dataset):
                         record.fileid, filename, prev_end, end_of_file, 0))
         self.num_channels = num_channels
                 
+    def get_record_duration(self, recordfile):
+        with pyedflib.EdfReader(recordfile) as f:
+            duration = f.file_duration
+        return duration
+        
     def create_windows_for_segment(self, recordid, recordfile, start_index, end_index, label):
         windows = []
         window_size = self.window_length * self.sample_rate
@@ -127,7 +139,7 @@ class ChbDataset(Dataset):
         return windows
                 
     def get_windows_for_epoch(self):
-        print(self.sampler)
+        #print(self.sampler)
         if self.sampler == 'all':
             self.windows = self.interictal + self.preictal + self.ictal
         elif self.sampler == 'equal':
@@ -135,7 +147,7 @@ class ChbDataset(Dataset):
             self.windows = random.sample(self.interictal, num_samples) \
                         + random.sample(self.preictal, num_samples) \
                         + random.sample(self.ictal, num_samples)
-            print(len(self.windows))
+            #print(len(self.windows))
         else:
             raise ValueError("Sampler must be all or equal")
             
@@ -162,7 +174,7 @@ class ChbDataset(Dataset):
     
     def all_data(self):
         data = [self.__getitem__(i) for i in range(len(self))]
-        print(data[0])
+        #print(data[0])
         allY = np.concatenate([[x[1] for x in data]])
         allX = np.concatenate([x[0] for x in data])
         return allX,allY
