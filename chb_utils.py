@@ -29,12 +29,14 @@ class ChbFile:
         self.duration = self.end_time - self.start_time
 
     def process_timestring(self, string):
-        add_day = False
-        if string.startswith('24'):
-            string = '00' + string[2:]
-            add_day = True
         if string[1] == ':':
             string = '0' + string
+        add_day = False
+        hour = int(string[0:2])
+        if hour > 23:
+            string = str(hour % 24) + string[2:]
+            add_day = True
+        
         dt = datetime.strptime(string, "%H:%M:%S")
         if add_day:
             dt = dt + timedelta(days=1)
@@ -61,14 +63,14 @@ def parse_summary_file(file):
         # channel names
         channel_re = re.compile("Channel (\d+): (.+)\n")
         matches = channel_re.findall(content)
-        print(f"found {len(matches)} channels")
         channels = {m[0]: m[1] for m in matches}
-        print(f"channels: {channels}")
+        #print(f"channels: {channels}")
         num_channels = len(channels)
+        print(f"found {num_channels} channels")
 
         # file names and seizure times
-        file_re_no_capture = re.compile("File Name: .+\nFile Start Time: \d?\d:\d\d:\d\d\nFile End Time: \d?\d:\d\d:\d\d\nNumber of Seizures in File: \d+\n[Seizure \d\s?Start Time: \d+ seconds\nSeizure \d*\s?End Time: \d+ seconds\n]*")
-        file_re = re.compile("File Name: (.+)\nFile Start Time: (\d?\d:\d\d:\d\d)\nFile End Time: (\d?\d:\d\d:\d\d)\nNumber of Seizures in File: (\d+)\n(Seizure \d\s?Start Time: (\d+) seconds\nSeizure \d*\s?End Time: (\d+) seconds\n)*")
+        file_re_no_capture = re.compile("File Name: .+\nFile Start Time: \d?\d:\d\d:\d\d\nFile End Time: \d?\d:\d\d:\d\d\nNumber of Seizures in File: \d+\n[Seizure \d*\s?Start Time:\s*\d+ seconds\nSeizure \d*\s?End Time:\s*\d+ seconds\n]*")
+        file_re = re.compile("File Name: (.+)\nFile Start Time: (\d?\d:\d\d:\d\d)\nFile End Time: (\d?\d:\d\d:\d\d)\nNumber of Seizures in File: (\d+)\n(Seizure \d*\s?Start Time:\s*(\d+) seconds\nSeizure \d*\s?End Time:\s*(\d+) seconds\n)*")
         matches = file_re_no_capture.findall(content)
         print(f"found {len(matches)} edf files")
         for match in matches:
@@ -81,19 +83,19 @@ def parse_summary_file(file):
             num_seizures = int(groups[3])
             seizures = []
             if num_seizures > 0:
-                seizure_re = re.compile("Seizure \d*\s?Start Time: (\d+) seconds\nSeizure \d*\s?End Time: (\d+) seconds\n")
+                seizure_re = re.compile("Seizure \d*\s?Start Time:\s*(\d+) seconds\nSeizure \d*\s?End Time:\s*(\d+) seconds\n")
                 s_matches = seizure_re.findall(match)
                 #print(s_matches)
-                assert len(s_matches) == num_seizures
+                assert len(s_matches) == num_seizures, f"Expected {num_seizures} seizures but found {len(s_matches)} matches"
                 for start, end in s_matches:
                     seizures.append(Seizure(start, end))
             chbfiles.append(ChbFile(fileid, start_time, end_time, num_channels, seizures))
-        print(f"Files {chbfiles}")
+        #print(f"Files {chbfiles}")
         return chbfiles
 
 
 # +
-#parse_summary_file('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/chb01/chb01-summary.txt')
+#parse_summary_file('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/chb12/chb12-summary.txt')
 # -
 
 def train_test_split(recordsfile, train_out="TRAIN_RECORDS.txt", test_out="TEST_RECORDS.txt"):
