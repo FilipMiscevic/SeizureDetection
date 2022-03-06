@@ -80,10 +80,10 @@ def parse_summary_file(file):
             seizures = []
             if num_seizures > 0:
                 seizure_re = re.compile("Seizure \d\s?Start Time: (\d+) seconds\nSeizure \d*\s?End Time: (\d+) seconds\n")
-                seizures = seizure_re.findall(match)
-                print(seizures)
-                assert len(seizures) == num_seizures
-                for start, end in seizures:
+                s_matches = seizure_re.findall(match)
+                print(s_matches)
+                assert len(s_matches) == num_seizures
+                for start, end in s_matches:
                     seizures.append(Seizure(start, end))
             chbfiles.append(ChbFile(fileid, start_time, end_time, seizures))
         print(f"Files {chbfiles}")
