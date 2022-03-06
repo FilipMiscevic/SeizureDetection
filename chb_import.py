@@ -44,7 +44,7 @@ class DataWindow:
 
 class ChbDataset(Dataset):
     def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',
-                 seizures_only=True,sample_rate=256,subject='chb01',mode='train',encoder=None,
+                 seizures_only=True,sample_rate=256,subject='chb01',mode='train',
                  window_length=5, preictal_length=300, sampler='all', welch_features=False): 
         ### other sampler option is "equal"
         'Initialization'
@@ -58,6 +58,7 @@ class ChbDataset(Dataset):
         self.mode = mode
         self.record_type = 'RECORDS-WITH-SEIZURES' if seizures_only else 'RECORDS'
         self.records = None
+        self.num_channels = None
         self.preictal = []
         self.ictal = []
         self.interictal = []
@@ -94,7 +95,9 @@ class ChbDataset(Dataset):
             self.subject,
             f"{self.subject}-summary.txt")
         all_records = parse_summary_file(summary_file)
+        num_channels = all_records[0].num_channels
         for record in all_records:
+            assert record.num_channels == num_channels, f"Expected {num_channels} channels, found {record.num_channels}"
             if f"{self.subject}/{record.fileid}" in self.records:
                 filename = os.path.join(self.data_dir, self.subject, record.fileid)
                 prev_end = 0
@@ -114,6 +117,7 @@ class ChbDataset(Dataset):
                         prev_end = ictal_end
                 self.interictal.extend(self.create_windows_for_segment(
                         record.fileid, filename, prev_end, end_of_file, 0))
+        self.num_channels = num_channels
                 
     def create_windows_for_segment(self, recordid, recordfile, start_index, end_index, label):
         windows = []
@@ -198,46 +202,40 @@ class XGBoostTrainer:
                 print(sum(preds==test[1])/len(test[1]))
 
 
-data_dir = os.path.expanduser('~/data/chb-mit-scalp-eeg-database-1.0.0/')
-d = ChbDataset(data_dir=data_dir, sampler='equal')
-len(d.ictal)
+run = False
+if run:
+    m = XGBoostTrainer()
+    m.train_all()
 
-d.all_data()
-
-m = XGBoostTrainer()
-m.train_all()
-
-# +
 from sklearn.metrics import confusion_matrix, plot_confusion_matrix, roc_curve, ConfusionMatrixDisplay, RocCurveDisplay,roc_auc_score, f1_score,classification_report
 #import seaborn as sn
 import pandas as pd
 import matplotlib.pyplot as plt
+if run:
+    y_true = np.concatenate(m.labels)
+    y_pred_class = np.concatenate(m.preds)
 
-y_true = np.concatenate(m.labels)
-y_pred_class = np.concatenate(m.preds)
+    y_pred_null = np.zeros_like(y_pred_class)
 
-y_pred_null = np.zeros_like(y_pred_class)
+    cm = confusion_matrix(y_true, y_pred_class)
+    cm2 = confusion_matrix(y_true, y_pred_null)
+    tn, fp, fn, tp = cm.ravel()
 
-cm = confusion_matrix(y_true, y_pred_class)
-cm2 = confusion_matrix(y_true, y_pred_null)
-tn, fp, fn, tp = cm.ravel()
+    cm_display = ConfusionMatrixDisplay(cm).plot()
+    cm_display2 = ConfusionMatrixDisplay(cm2).plot()
 
-cm_display = ConfusionMatrixDisplay(cm).plot()
-cm_display2 = ConfusionMatrixDisplay(cm2).plot()
-
-# +
 #fpr, tpr, _ = roc_curve(y_true, y_pred_class)#, pos_label=m.model.classes_[1])
 #roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
+if run:
+    r = roc_auc_score(y_true,y_pred_class)
+    r2 = roc_auc_score(y_true,y_pred_null)
+    print(r,r2)
 
-r = roc_auc_score(y_true,y_pred_class)
-r2 = roc_auc_score(y_true,y_pred_null)
-print(r,r2)
+    fpr = fp/(fp+tn)
+    print("False positives per day: " + str(fpr/((fp+tn)/256/60)*24))
 
-fpr = fp/(fp+tn)
-print("False positives per day: " + str(fpr/((fp+tn)/256/60)*24))
-# -
-
-print(classification_report(y_true,y_pred_class))
-print(classification_report(y_true,y_pred_null))
+if run: 
+    print(classification_report(y_true,y_pred_class))
+    print(classification_report(y_true,y_pred_null))
 
 

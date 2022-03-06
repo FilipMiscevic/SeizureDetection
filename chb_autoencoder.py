@@ -102,10 +102,6 @@ class ChbAutoencoderDataset(Dataset):
         mean = np.mean(sample)
         return sample - mean
 
-data_dir = os.path.expanduser('~/data/chb-mit-scalp-eeg-database-1.0.0/')
-dataset = ChbAutoencoderDataset(data_dir=data_dir, normalize=False)
-loader = DataLoader(dataset, batch_size=10)
-
 
 class Autoencoder(torch.nn.Module):
     def __init__(self, input_shape, num_layers=4, layer_sizes=[1024, 512, 256, 128]):
@@ -149,74 +145,80 @@ class Autoencoder(torch.nn.Module):
         return decoded
 
 
-# +
-# Model Initialization
-input_shape = 1280
-model = Autoencoder(input_shape=(input_shape,), num_layers=4, layer_sizes=[1024, 1024, 512, 512])
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print(device)
-model.to(device)
-  
-# Validation using MSE Loss function
-loss_function = torch.nn.MSELoss()
-  
-# Using an Adam Optimizer with lr = 0.1
-optimizer = torch.optim.Adam(model.parameters(),
-                             lr = 1e-4)
-# -
+run = False
+if run:
+    data_dir = os.path.expanduser('~/data/chb-mit-scalp-eeg-database-1.0.0/')
+    dataset = ChbAutoencoderDataset(data_dir=data_dir, normalize=False)
+    loader = DataLoader(dataset, batch_size=10)
+
+if run:
+    # Model Initialization
+    input_shape = 1280
+    model = Autoencoder(input_shape=(input_shape,), num_layers=4, layer_sizes=[1024, 1024, 512, 512])
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(device)
+    model.to(device)
+
+    # Validation using MSE Loss function
+    loss_function = torch.nn.MSELoss()
+
+    # Using an Adam Optimizer with lr = 0.1
+    optimizer = torch.optim.Adam(model.parameters(),
+                                 lr = 1e-4)
 
 outputs = []
 avg_epoch_losses = []
 
 import time
-epochs = 10000
-run_name = 'basic_autoencoder_1024_1024_512_512'
-model.load_state_dict(torch.load(f"runs/{run_name}_epoch1000.state"))
-for epoch in range(1000, epochs + 1):
-    start_time = time.time()
-    # random.seed(100)
-    epoch_loss = []
-    for sample in loader:
-        sample = sample.to(device)
+if run:
+    epochs = 10000
+    run_name = 'basic_autoencoder_1024_1024_512_512'
+    model.load_state_dict(torch.load(f"runs/{run_name}_epoch1000.state"))
+    for epoch in range(1000, epochs + 1):
+        start_time = time.time()
+        # random.seed(100)
+        epoch_loss = []
+        for sample in loader:
+            sample = sample.to(device)
 
-        # Output of Autoencoder
-        reconstructed = model(sample)
+            # Output of Autoencoder
+            reconstructed = model(sample)
 
-        # Calculating the loss function
-        loss = loss_function(reconstructed, sample)
+            # Calculating the loss function
+            loss = loss_function(reconstructed, sample)
 
-        # The gradients are set to zero,
-        # the the gradient is computed and stored.
-        # .step() performs parameter update
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            # The gradients are set to zero,
+            # the the gradient is computed and stored.
+            # .step() performs parameter update
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        # Storing the losses in a list for plotting
-        epoch_loss.append(loss.detach().cpu().numpy())
+            # Storing the losses in a list for plotting
+            epoch_loss.append(loss.detach().cpu().numpy())
 
-    outputs.append((epoch, sample.detach().cpu().numpy(), reconstructed.detach().cpu().numpy()))
-    avg_epoch_losses.append(np.mean(epoch_loss))
-    print(f"epoch {epoch} (loss: {avg_epoch_losses[-1]}) took {time.time() - start_time} seconds")
-    if epoch % 100 == 0:
-        torch.save(model.state_dict(), f"runs/{run_name}_epoch{epoch}.state")
+        outputs.append((epoch, sample.detach().cpu().numpy(), reconstructed.detach().cpu().numpy()))
+        avg_epoch_losses.append(np.mean(epoch_loss))
+        print(f"epoch {epoch} (loss: {avg_epoch_losses[-1]}) took {time.time() - start_time} seconds")
+        if epoch % 100 == 0:
+            torch.save(model.state_dict(), f"runs/{run_name}_epoch{epoch}.state")
 
 
-wrong_outputs = outputs
-outputs = wrong_outputs[0:1000] + wrong_outputs[9000:]
-# Defining the Plot Style
-plt.figure(figsize=(12, 5))
-plt.xlabel('Epochs')
-plt.ylabel('Average Training Loss')
-plt.plot(avg_epoch_losses)
-plt.savefig(f"average_losses_{run_name}.png")
+if run:
+    # Defining the Plot Style
+    plt.figure(figsize=(12, 5))
+    plt.xlabel('Epochs')
+    plt.ylabel('Average Training Loss')
+    plt.plot(avg_epoch_losses)
+    plt.savefig(f"average_losses_{run_name}.png")
 
-for i in range(9900, len(outputs), 1):
-    epoch, sample, reconstruction = outputs[i]
-    print(f"Epoch {epoch}")
-    plt.plot(sample[0])
-    plt.plot(reconstruction[0], color="orange")
-    plt.show()
+if run:
+    for i in range(9900, len(outputs), 1):
+        epoch, sample, reconstruction = outputs[i]
+        print(f"Epoch {epoch}")
+        plt.plot(sample[0])
+        plt.plot(reconstruction[0], color="orange")
+        plt.show()
 
 
 
