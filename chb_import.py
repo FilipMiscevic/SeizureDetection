@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.13.2
+#       jupytext_version: 1.13.7
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -19,17 +19,55 @@ import numpy as np
 from scipy.signal import spectrogram, welch
 from xgboost import XGBClassifier, plot_tree
 from sklearn import metrics
+from chb_utils import parse_summary_file
+import os
+import random
 
 
-# +
+class DataWindow:
+    def __init__(self, record_id, record_file, start_index, end_index, label):
+        self.record_id = record_id
+        self.record_file = record_file
+        self.start_index = start_index
+        self.end_index = end_index
+        self.label = label
+        
+    def get_data(self):
+        with pyedflib.EdfReader(self.record_file) as f:
+            channels = f.signals_in_file
+            size = self.end_index - self.start_index
+            data = np.zeros((channels, size))
+            for i in range(channels):
+                data[i, :] = f.readSignal(i, self.start_index, size)
+        return data
+
+
 class ChbDataset(Dataset):
     def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',
-                 seizures_only=True,sample_rate=256,subject='chb01',mode='train'):
+                 seizures_only=True,sample_rate=256,subject='chb01',mode='train',encoder=None,
+                 window_length=5, preictal_length=300, sampler='all', welch_features=False): 
+        ### other sampler option is "equal"
         'Initialization'
         self.sample_rate = sample_rate
+        self.subject = subject
         self.data_dir = data_dir
+        self.window_length = window_length
+        self.preictal_length = preictal_length
+        self.welch_features = welch_features
+        self.sampler = sampler
+        self.mode = mode
         self.record_type = 'RECORDS-WITH-SEIZURES' if seizures_only else 'RECORDS'
-                
+        self.records = None
+        self.preictal = []
+        self.ictal = []
+        self.interictal = []
+        self.windows = []
+        random.seed(1000)
+        self.get_records() 
+        self.get_labeled_windows()
+        self.get_windows_for_epoch()
+        
+    def get_records(self):
         with open(self.data_dir+self.record_type) as f:
             self.records = f.read().strip().splitlines()
             f.close()
@@ -39,88 +77,98 @@ class ChbDataset(Dataset):
             f.close()
             
         #filter based on subject
-        self.records = [record for record in self.records if subject in record]
+        self.records = [record for record in self.records if self.subject in record]
         
-        if mode == 'train':
-            self.records = self.records[:int(4*len(self.records)/5)]
-        elif mode == 'test':
-            self.records = self.records[int(4*len(self.records)/5):]
+        if self.mode == 'train':
+            limit_file = os.path.join(self.data_dir, 'TRAIN_RECORDS.txt')
+        else:
+            limit_file = os.path.join(self.data_dir, 'TEST_RECORDS.txt')
+        with open(limit_file) as f:
+            limit_records = set(f.read().strip().splitlines())
+            records = set(self.records)
+        self.records = list(records - limit_records)
+    
+    def get_labeled_windows(self):
+        summary_file = os.path.join(
+            self.data_dir,
+            self.subject,
+            f"{self.subject}-summary.txt")
+        all_records = parse_summary_file(summary_file)
+        for record in all_records:
+            if f"{self.subject}/{record.fileid}" in self.records:
+                filename = os.path.join(self.data_dir, self.subject, record.fileid)
+                prev_end = 0
+                end_of_file = int(record.duration.total_seconds()) * self.sample_rate
+                if len(record.seizures) > 0:
+                    seizures = []
+                    for seizure in record.seizures:
+                        preictal_start = max(self.sample_rate * (seizure.start_time - self.preictal_length), 0)
+                        ictal_start = self.sample_rate * seizure.start_time
+                        ictal_end = self.sample_rate * seizure.end_time
+                        self.interictal.extend(self.create_windows_for_segment(
+                            record.fileid, filename, prev_end, preictal_start, 0))
+                        self.preictal.extend(self.create_windows_for_segment(
+                            record.fileid, filename,preictal_start, ictal_start, 1))
+                        self.ictal.extend(self.create_windows_for_segment(
+                            record.fileid, filename, ictal_start, ictal_end, 2))
+                        prev_end = ictal_end
+                self.interictal.extend(self.create_windows_for_segment(
+                        record.fileid, filename, prev_end, end_of_file, 0))
+                
+    def create_windows_for_segment(self, recordid, recordfile, start_index, end_index, label):
+        windows = []
+        window_size = self.window_length * self.sample_rate
+        for i in range(start_index, end_index - window_size + 1, window_size):
+            windows.append(DataWindow(recordid, recordfile, i, i + window_size, label))
+        return windows
+                
+    def get_windows_for_epoch(self):
+        print(self.sampler)
+        if self.sampler == 'all':
+            self.windows = self.interictal + self.preictal + self.ictal
+        elif self.sampler == 'equal':
+            num_samples = min([len(self.preictal), len(self.interictal), len(self.ictal)])
+            self.windows = random.sample(self.interictal, num_samples) \
+                        + random.sample(self.preictal, num_samples) \
+                        + random.sample(self.ictal, num_samples)
+            print(len(self.windows))
+        else:
+            raise ValueError("Sampler must be all or equal")
             
     def __len__(self):
         'Denotes the total number of samples'
-        return len(self.records)
+        if self.sampler == 'all':
+            return len(self.preictal) + len(self.interictal) + len(self.ictal)
+        elif self.sampler == 'equal':
+            smallest = min([len(self.preictal), len(self.interictal), len(self.ictal)])
+            return smallest * 3
+        else:
+            raise ValueError("Sampler must be all or equal")
         
     def __getitem__(self, index):
-        'Generates one sample of data'
+        'Generates one sample of data, which is one window of length window_length'
         # Select sample
-        file_name = self.records[index]
-        
-        f = pyedflib.EdfReader(self.data_dir+file_name)
-        n = 23 #f.signals_in_file
-        signal_labels = f.getSignalLabels()
-        sigbufs = np.zeros((n, f.getNSamples()[0]))
-        for i in np.arange(n):
-                try:
-                    sigbufs[i, :] = f.readSignal(i)
-                except Exception as e:
-                    sigbufs[i, :] = np.zeros(f.getNSamples()[0])
-        f.close()
-                
-        labels = np.zeros((1, f.getNSamples()[0]))
-        
-       #get labels if seizure. TODO: deal with multiple seizures
-        if file_name in self.labelled:
-            with open(self.data_dir + file_name.split('/')[0] + '/' + file_name.split('/')[0] + '-summary.txt') as g:
-                lines = g.readlines()
-                
-                found = False
-                i = 0
-                for line in lines:
-                    if file_name.split('/')[1] in line:
-                        found = True
-                    if found:
-                        if i == 4:
-                            self.seizure_start = int(line.split(' ')[-2])
-                        if i == 5:
-                            self.seizure_end   = int(line.split(' ')[-2])   
-                            i = 0
-                            found  = False        
-                            start  = self.sample_rate * self.seizure_start
-                            end    = self.sample_rate * self.seizure_end
-                            labels[:,start:end] = 1.0
-                        i += 1            
-        
-        s       = 2 #window in seconds
-        #print(sigbufs.shape,-sigbufs.shape[1]%(s*self.sample_rate))
-        sigbufs = np.concatenate((sigbufs,np.zeros((sigbufs.shape[0],-sigbufs.shape[1]%(s*self.sample_rate)))),axis=1)
-        labels = np.concatenate((labels,np.zeros((labels.shape[0],-labels.shape[1]%(s*self.sample_rate)))),axis=1)
-        #print(sigbufs.shape)
-        
-        split   = np.array_split(sigbufs,sigbufs.shape[1]/(s*self.sample_rate),axis=1)
-        labels  = [np.any(ss) for ss in np.array_split(labels[0],sigbufs.shape[1]/(s*self.sample_rate))]
-
-        all_X = []
-        # calculate the Welch spectrum for each window
-        for p_secs in split:
-            p_f, p_Sxx = welch(p_secs, fs=self.sample_rate, axis=1)
-            p_SS = np.log1p(p_Sxx)
-            arr = p_SS[:] / np.max(p_SS)
-            all_X.append(arr)
-        
-        x = np.array(all_X)
-        x = x.reshape((x.shape[0],x.shape[1]*x.shape[2]))
-        
-        #print(signal_labels)
-        
-        return x,np.array(labels)
+        window = self.windows[index]
+        data = window.get_data()
+        label = window.label
+        if self.welch_features:
+            features = self.__welch_features(data)
+            data = sample.flatten()
+        return data, label
     
     def all_data(self):
-        data = [self.__getitem__(i) for i in range(len(self.records))]
-        allY = np.concatenate([x[1] for x in data])
-        
-        #[print(x[0].shape) for x in data]
+        data = [self.__getitem__(i) for i in range(len(self))]
+        print(data[0])
+        allY = np.concatenate([[x[1] for x in data]])
         allX = np.concatenate([x[0] for x in data])
         return allX,allY
+    
+    def __welch_features(self, sample):
+        p_f, p_Sxx = welch(sample, fs=dataset.sample_rate, axis=1)
+        p_SS = np.log1p(p_Sxx)
+        arr = p_SS[:] / np.max(p_SS)
+        return arr
+
 
 
 class XGBoostTrainer:
@@ -148,9 +196,13 @@ class XGBoostTrainer:
                 self.labels.append(test[1])
                 
                 print(sum(preds==test[1])/len(test[1]))
-    
-    
-# -
+
+
+data_dir = os.path.expanduser('~/data/chb-mit-scalp-eeg-database-1.0.0/')
+d = ChbDataset(data_dir=data_dir, sampler='equal')
+len(d.ictal)
+
+d.all_data()
 
 m = XGBoostTrainer()
 m.train_all()

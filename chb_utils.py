@@ -71,17 +71,17 @@ def parse_summary_file(file):
         print(f"found {len(matches)} edf files")
         for match in matches:
             groups = file_re.match(match).groups()
-            print(match)
-            print(groups)
+            #print(match)
+            #print(groups)
             fileid = groups[0]
             start_time = groups[1]
             end_time = groups[2]
             num_seizures = int(groups[3])
             seizures = []
             if num_seizures > 0:
-                seizure_re = re.compile("Seizure \d\s?Start Time: (\d+) seconds\nSeizure \d*\s?End Time: (\d+) seconds\n")
+                seizure_re = re.compile("Seizure \d*\s?Start Time: (\d+) seconds\nSeizure \d*\s?End Time: (\d+) seconds\n")
                 s_matches = seizure_re.findall(match)
-                print(s_matches)
+                #print(s_matches)
                 assert len(s_matches) == num_seizures
                 for start, end in s_matches:
                     seizures.append(Seizure(start, end))
@@ -90,8 +90,9 @@ def parse_summary_file(file):
         return chbfiles
 
 
-parse_summary_file('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/chb16/chb16-summary.txt')
-
+# +
+#parse_summary_file('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/chb01/chb01-summary.txt')
+# -
 
 def train_test_split(recordsfile, train_out="TRAIN_RECORDS.txt", test_out="TEST_RECORDS.txt"):
     random.seed(144)
@@ -121,8 +122,9 @@ def train_test_split(recordsfile, train_out="TRAIN_RECORDS.txt", test_out="TEST_
                 f.write(file)
 
 
-train_test_split('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/RECORDS-WITH-SEIZURES')
-
+# +
+#train_test_split('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/RECORDS-WITH-SEIZURES')
+# -
 
 def read_edf_file(file_name, sample_length=5):
     with pyedflib.EdfReader(file_name) as f:
@@ -144,10 +146,11 @@ def read_edf_file(file_name, sample_length=5):
         for i, d in enumerate(channel_data):
             plt.plot(d, label=f"{i}")
         plt.show()
-        
 
 
-read_edf_file('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/chb01/chb01_18.edf')
+
+# +
+#read_edf_file('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/chb01/chb01_18.edf')
 
 # + active=""
 #
