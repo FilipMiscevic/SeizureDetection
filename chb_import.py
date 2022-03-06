@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.13.7
+#       jupytext_version: 1.13.2
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -34,7 +34,7 @@ class DataWindow:
         
     def get_data(self):
         with pyedflib.EdfReader(self.record_file) as f:
-            channels = f.signals_in_file
+            channels = 23#f.signals_in_file
             size = self.end_index - self.start_index
             data = np.zeros((channels, size))
             for i in range(channels):
@@ -81,9 +81,9 @@ class ChbDataset(Dataset):
         self.records = [record for record in self.records if self.subject in record]
         
         if self.mode == 'train':
-            limit_file = os.path.join(self.data_dir, 'TRAIN_RECORDS.txt')
+            limit_file = 'TRAIN_RECORDS.txt'
         else:
-            limit_file = os.path.join(self.data_dir, 'TEST_RECORDS.txt')
+            limit_file = 'TEST_RECORDS.txt'
         with open(limit_file) as f:
             limit_records = set(f.read().strip().splitlines())
             records = set(self.records)
@@ -168,7 +168,7 @@ class ChbDataset(Dataset):
         data = window.get_data()
         label = window.label
         if self.welch_features:
-            features = self.__welch_features(data)
+            sample = self.__welch_features(data)
             data = sample.flatten()
         return data, label
     
@@ -176,20 +176,19 @@ class ChbDataset(Dataset):
         data = [self.__getitem__(i) for i in range(len(self))]
         #print(data[0])
         allY = np.concatenate([[x[1] for x in data]])
-        allX = np.concatenate([x[0] for x in data])
+        allX = np.array([x[0] for x in data])
         return allX,allY
     
     def __welch_features(self, sample):
-        p_f, p_Sxx = welch(sample, fs=dataset.sample_rate, axis=1)
+        p_f, p_Sxx = welch(sample, fs=self.sample_rate, axis=1)
         p_SS = np.log1p(p_Sxx)
         arr = p_SS[:] / np.max(p_SS)
         return arr
 
 
-
 class XGBoostTrainer:
     def __init__(self):
-        self.model = XGBClassifier(objective='binary:hinge', learning_rate = 0.1,
+        self.model = XGBClassifier(objective='multi:softprob', learning_rate = 0.1,
               max_depth = 1, n_estimators = 330)
         self.subjects = ['chb0'+str(i) for i in range(1,10)] + ['chb' + str(i) for i in range(10,25)]
         self.preds = []
@@ -199,25 +198,34 @@ class XGBoostTrainer:
         
         for subject in self.subjects:
             print('Training ' + subject)
-            train = ChbDataset(mode='train',subject=subject)
-            tests = ChbDataset(mode='test' ,subject=subject)
+            train = ChbDataset(mode='train',subject=subject, welch_features=True)
+            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True)
         
             allX,allY = train.all_data()
             
             self.model.fit(allX, allY)
+            
+            testX,testY = tests.all_data()
 
-            for test in tests:
-                preds = self.model.predict(test[0])
-                self.preds.append((preds))
-                self.labels.append(test[1])
+            preds = self.model.predict(testX)
+            self.preds.append((preds))
+            self.labels.append(testY)
                 
-                print(sum(preds==test[1])/len(test[1]))
+            print(sum(preds==testY)/len(testY))
 
 
-run = False
+# +
+run = True
 if run:
     m = XGBoostTrainer()
     m.train_all()
+
+subject = 'chb01'
+    
+train = ChbDataset(mode='train',subject=subject, welch_features=True)
+tests = ChbDataset(mode='test' ,subject=subject, welch_features=True)
+
+# -
 
 from sklearn.metrics import confusion_matrix, plot_confusion_matrix, roc_curve, ConfusionMatrixDisplay, RocCurveDisplay,roc_auc_score, f1_score,classification_report
 #import seaborn as sn
