@@ -19,11 +19,12 @@ class Seizure:
 
 
 class ChbFile:
-    def __init__(self, fileid, start_time, end_time, seizures):
+    def __init__(self, fileid, start_time, end_time, num_channels, seizures):
         # times as strings dd:dd:dd, seizures as list of Seizure objects
         self.fileid = fileid
         self.start_time = self.process_timestring(start_time)
         self.end_time = self.process_timestring(end_time)
+        self.num_channels = num_channels
         self.seizures = seizures
         self.duration = self.end_time - self.start_time
 
@@ -63,6 +64,7 @@ def parse_summary_file(file):
         print(f"found {len(matches)} channels")
         channels = {m[0]: m[1] for m in matches}
         print(f"channels: {channels}")
+        num_channels = len(channels)
 
         # file names and seizure times
         file_re_no_capture = re.compile("File Name: .+\nFile Start Time: \d?\d:\d\d:\d\d\nFile End Time: \d?\d:\d\d:\d\d\nNumber of Seizures in File: \d+\n[Seizure \d\s?Start Time: \d+ seconds\nSeizure \d*\s?End Time: \d+ seconds\n]*")
@@ -85,7 +87,7 @@ def parse_summary_file(file):
                 assert len(s_matches) == num_seizures
                 for start, end in s_matches:
                     seizures.append(Seizure(start, end))
-            chbfiles.append(ChbFile(fileid, start_time, end_time, seizures))
+            chbfiles.append(ChbFile(fileid, start_time, end_time, num_channels, seizures))
         print(f"Files {chbfiles}")
         return chbfiles
 
