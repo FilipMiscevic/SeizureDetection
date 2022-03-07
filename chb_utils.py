@@ -19,12 +19,12 @@ class Seizure:
 
 
 class ChbFile:
-    def __init__(self, fileid, start_time, end_time, num_channels, seizures):
+    def __init__(self, fileid, start_time, end_time, channels, seizures):
         # times as strings dd:dd:dd, seizures as list of Seizure objects
         self.fileid = fileid
         self.start_time = self.process_timestring(start_time)
         self.end_time = self.process_timestring(end_time)
-        self.num_channels = num_channels
+        self.channels = channels
         self.seizures = seizures
         self.duration = None if self.start_time is None else self.end_time - self.start_time
 
@@ -67,8 +67,8 @@ def parse_summary_file(file):
         # channel names
         channel_re = re.compile("Channel (\d+): (.+)\n")
         matches = channel_re.findall(content)
-        channels = {m[0]: m[1] for m in matches}
-        #print(f"channels: {channels}")
+        channels = [m[1] for m in matches]
+        print(f"channels: {channels}")
         num_channels = len(channels)
         print(f"found {num_channels} channels")
 
@@ -93,7 +93,7 @@ def parse_summary_file(file):
                 assert len(s_matches) == num_seizures, f"Expected {num_seizures} seizures but found {len(s_matches)} matches"
                 for start, end in s_matches:
                     seizures.append(Seizure(start, end))
-            chbfiles.append(ChbFile(fileid, start_time, end_time, num_channels, seizures))
+            chbfiles.append(ChbFile(fileid, start_time, end_time, channels, seizures))
         #print(f"Files {chbfiles}")
         return chbfiles
 
@@ -115,8 +115,8 @@ def parse_summary_file_chb24(file):
         # channel names
         channel_re = re.compile("Channel (\d+): (.+)\n")
         matches = channel_re.findall(content)
-        channels = {m[0]: m[1] for m in matches}
-        #print(f"channels: {channels}")
+        channels = [m[1] for m in matches]
+        print(f"channels: {channels}")
         num_channels = len(channels)
         print(f"found {num_channels} channels")
 
@@ -141,14 +141,13 @@ def parse_summary_file_chb24(file):
                 assert len(s_matches) == num_seizures, f"Expected {num_seizures} seizures but found {len(s_matches)} matches"
                 for start, end in s_matches:
                     seizures.append(Seizure(start, end))
-            chbfiles.append(ChbFile(fileid, start_time, end_time, num_channels, seizures))
+            chbfiles.append(ChbFile(fileid, start_time, end_time, channels, seizures))
         #print(f"Files {chbfiles}")
         return chbfiles
 
 
-# +
-#parse_summary_file_chb24('/home/caroline/data/chb-mit-scalp-eeg-database-1.0.0/chb24/chb24-summary.txt')
-# -
+parse_summary_file_chb24('./chb-mit-scalp-eeg-database-1.0.0/chb24/chb24-summary.txt')
+
 
 def train_test_split(recordsfile, train_out="TRAIN_RECORDS.txt", test_out="TEST_RECORDS.txt"):
     random.seed(144)

@@ -25,20 +25,33 @@ import random
 
 
 class DataWindow:
-    def __init__(self, record_id, record_file, start_index, end_index, label):
+    def __init__(self, record_id, record_file, start_index, end_index, label, channels):
         self.record_id = record_id
         self.record_file = record_file
         self.start_index = start_index
         self.end_index = end_index
         self.label = label
+        self.channels = channels
         
     def get_data(self):
         with pyedflib.EdfReader(self.record_file) as f:
-            channels = 23#f.signals_in_file
+            labels = f.getSignalLabels()
+            
+            expected_channels = 23
+            actual_channels   = f.signals_in_file
+            
+            data = []
+            idxs = []
+            for channel in self.channels:
+                if channel in labels:
+                    idxs.append(labels.index(channel))
+            #if len(idxs) != expected_channels: 
+            #    raise ValueError(f'{len(idxs)} channels found, expected {expected_channels}.')
+            
             size = self.end_index - self.start_index
-            data = np.zeros((channels, size))
-            for i in range(f.signals_in_file if f.signals_in_file < channels else channels):
-                data[i, :] = f.readSignal(i, self.start_index, size)
+            data = np.zeros((expected_channels, size))
+            for i,j in enumerate(idxs):
+                data[i, :] = f.readSignal(j, self.start_index, size)
         return data
 
 
@@ -60,11 +73,12 @@ class ChbDataset(Dataset):
         self.mode = mode
         self.record_type = 'RECORDS-WITH-SEIZURES' if seizures_only else 'RECORDS'
         self.records = None
-        self.num_channels = None
+        self.num_channels = 23
         self.preictal = []
         self.ictal = []
         self.interictal = []
         self.windows = []
+        self.channel_labels = ['FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1', 'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2', 'FZ-CZ', 'CZ-PZ', 'P7-T7', 'T7-FT9', 'FT9-FT10', 'FT10-T8', 'T8-P8']
         random.seed(1000)
         self.get_records() 
         self.get_labeled_windows()
@@ -100,53 +114,57 @@ class ChbDataset(Dataset):
             all_records = parse_summary_file_chb24(summary_file)
         else:
             all_records = parse_summary_file(summary_file)
-        num_channels = all_records[0].num_channels
+
         for record in all_records:
-            assert record.num_channels == num_channels, f"Expected {num_channels} channels, found {record.num_channels}"
-            if f"{self.subject}/{record.fileid}" in self.records:
-                filename = os.path.join(self.data_dir, self.subject, record.fileid)
-                prev_end = 0
-                if record.duration is None:
-                    duration = self.get_record_duration(filename)
-                else:
-                    duration = int(record.duration.total_seconds())
-                end_of_file = duration * self.sample_rate
-                if len(record.seizures) > 0:
-                    seizures = []
-                    for seizure in record.seizures:
-                        if self.multiclass:
-                            preictal_start = max(self.sample_rate * (seizure.start_time - self.preictal_length), 0)
-                            ictal_start = self.sample_rate * seizure.start_time
-                            ictal_end = self.sample_rate * seizure.end_time
-                            self.interictal.extend(self.create_windows_for_segment(
-                                record.fileid, filename, prev_end, preictal_start, 0))
-                            self.preictal.extend(self.create_windows_for_segment(
-                                record.fileid, filename,preictal_start, ictal_start, 1))
-                            self.ictal.extend(self.create_windows_for_segment(
-                                record.fileid, filename, ictal_start, ictal_end, 2))
-                            prev_end = ictal_end
-                        else:
-                            ictal_start = self.sample_rate * seizure.start_time
-                            ictal_end = self.sample_rate * seizure.end_time
-                            self.interictal.extend(self.create_windows_for_segment(
-                                record.fileid, filename, prev_end, ictal_start, 0))
-                            self.ictal.extend(self.create_windows_for_segment(
-                                record.fileid, filename, ictal_start, ictal_end, 1))
-                            prev_end = ictal_end
-                self.interictal.extend(self.create_windows_for_segment(
-                        record.fileid, filename, prev_end, end_of_file, 0))
-        self.num_channels = num_channels
+            #assert len(record.channels) == num_channels, f"Expected {num_channels} channels, found {len(record.channels)}"
+            try:
+                if f"{self.subject}/{record.fileid}" in self.records:
+                    filename = os.path.join(self.data_dir, self.subject, record.fileid)
+                    prev_end = 0
+                    if record.duration is None:
+                        duration = self.get_record_duration(filename)
+                    else:
+                        duration = int(record.duration.total_seconds())
+                    end_of_file = duration * self.sample_rate
+                    if len(record.seizures) > 0:
+                        seizures = []
+                        for seizure in record.seizures:
+                            if self.multiclass:
+                                preictal_start = max(self.sample_rate * (seizure.start_time - self.preictal_length), 0)
+                                ictal_start = self.sample_rate * seizure.start_time
+                                ictal_end = self.sample_rate * seizure.end_time
+                                self.interictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename, prev_end, preictal_start, 0,self.channel_labels))
+                                self.preictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename,preictal_start, ictal_start, 1,self.channel_labels))
+                                self.ictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename, ictal_start, ictal_end, 2,self.channel_labels))
+                                prev_end = ictal_end
+                            else:
+                                ictal_start = self.sample_rate * seizure.start_time
+                                ictal_end = self.sample_rate * seizure.end_time
+                                self.interictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename, prev_end, ictal_start, 0,self.channel_labels))
+                                self.ictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename, ictal_start, ictal_end, 1,self.channel_labels))
+                                prev_end = ictal_end
+                    self.interictal.extend(self.create_windows_for_segment(
+                            record.fileid, filename, prev_end, end_of_file, 0,self.channel_labels))
+            except Exception as e:
+                print(e)
+                continue
+        #self.num_channels = num_channels
                 
     def get_record_duration(self, recordfile):
         with pyedflib.EdfReader(recordfile) as f:
             duration = f.file_duration
         return duration
         
-    def create_windows_for_segment(self, recordid, recordfile, start_index, end_index, label):
+    def create_windows_for_segment(self, recordid, recordfile, start_index, end_index, label,channels):
         windows = []
         window_size = self.window_length * self.sample_rate
         for i in range(start_index, end_index - window_size + 1, window_size):
-            windows.append(DataWindow(recordid, recordfile, i, i + window_size, label))
+            windows.append(DataWindow(recordid, recordfile, i, i + window_size, label,channels))
         return windows
                 
     def get_windows_for_epoch(self):
@@ -216,8 +234,8 @@ class XGBoostTrainer:
         
         for subject in self.subjects:
             print('Training ' + subject)
-            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False)
-            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False)
+            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=True)
+            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=True)
         
             allX,allY = train.all_data()
             
@@ -251,7 +269,7 @@ if run:
     cm2 = confusion_matrix(y_true, y_pred_null)
     #tn, fp, fn, tp = cm.ravel()
 
-    cm_display = ConfusionMatrixDisplay(cm).plot()
+    cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Preictal','Ictal']).plot()
     cm_display2 = ConfusionMatrixDisplay(cm2).plot()
 
 fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=2)#, pos_label=m.model.classes_[1])
