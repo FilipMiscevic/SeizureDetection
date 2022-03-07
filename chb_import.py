@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.13.2
+#       jupytext_version: 1.13.7
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -78,7 +78,9 @@ class ChbDataset(Dataset):
         self.ictal = []
         self.interictal = []
         self.windows = []
-        self.channel_labels = ['FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1', 'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2', 'FZ-CZ', 'CZ-PZ', 'P7-T7', 'T7-FT9', 'FT9-FT10', 'FT10-T8', 'T8-P8']
+        self.channel_labels = ['FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1',
+                               'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2',
+                               'FZ-CZ', 'CZ-PZ', 'P7-T7', 'T7-FT9', 'FT9-FT10', 'FT10-T8', 'T8-P8']
         random.seed(1000)
         self.get_records() 
         self.get_labeled_windows()
@@ -103,7 +105,7 @@ class ChbDataset(Dataset):
         with open(limit_file) as f:
             limit_records = set(f.read().strip().splitlines())
             records = set(self.records)
-        self.records = list(records - limit_records)
+        self.records = list(records.intersection(limit_records))
     
     def get_labeled_windows(self):
         summary_file = os.path.join(
@@ -250,7 +252,7 @@ class XGBoostTrainer:
             print(sum(preds==testY)/len(testY))
 
 
-run = True
+run = False
 if run:
     m = XGBoostTrainer()
     m.train_all()
@@ -272,9 +274,9 @@ if run:
     cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Preictal','Ictal']).plot()
     cm_display2 = ConfusionMatrixDisplay(cm2).plot()
 
-fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=2)#, pos_label=m.model.classes_[1])
-roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
 if run:
+    fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=2)#, pos_label=m.model.classes_[1])
+    roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
     r = roc_auc_score(y_true,y_pred_class)
     r2 = roc_auc_score(y_true,y_pred_null)
     print(r,r2)
