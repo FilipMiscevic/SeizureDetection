@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.13.7
+#       jupytext_version: 1.13.2
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -78,7 +78,7 @@ class ChbDataset(Dataset):
         self.ictal = []
         self.interictal = []
         self.windows = []
-        self.channel_labels = ['FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1',
+        self.channels = ['FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1',
                                'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2',
                                'FZ-CZ', 'CZ-PZ', 'P7-T7', 'T7-FT9', 'FT9-FT10', 'FT10-T8', 'T8-P8']
         random.seed(1000)
@@ -106,6 +106,19 @@ class ChbDataset(Dataset):
             limit_records = set(f.read().strip().splitlines())
             records = set(self.records)
         self.records = list(records.intersection(limit_records))
+        
+        for record in self.records:
+            f = pyedflib.EdfReader(self.data_dir+ '/'+record)
+            labels = f.getSignalLabels()
+            idxs = []
+            for channel in self.channels:
+                if channel in labels:
+                    idxs.append(labels.index(channel))
+            if len(idxs) != len(self.channels):
+                self.records.remove(record)
+                print(f"Record {record} removed because it contained {len(idxs)} channels.")
+            f.close()
+        print(self.records)
     
     def get_labeled_windows(self):
         summary_file = os.path.join(
@@ -119,42 +132,39 @@ class ChbDataset(Dataset):
 
         for record in all_records:
             #assert len(record.channels) == num_channels, f"Expected {num_channels} channels, found {len(record.channels)}"
-            try:
-                if f"{self.subject}/{record.fileid}" in self.records:
-                    filename = os.path.join(self.data_dir, self.subject, record.fileid)
-                    prev_end = 0
-                    if record.duration is None:
-                        duration = self.get_record_duration(filename)
-                    else:
-                        duration = int(record.duration.total_seconds())
-                    end_of_file = duration * self.sample_rate
-                    if len(record.seizures) > 0:
-                        seizures = []
-                        for seizure in record.seizures:
-                            if self.multiclass:
-                                preictal_start = max(self.sample_rate * (seizure.start_time - self.preictal_length), 0)
-                                ictal_start = self.sample_rate * seizure.start_time
-                                ictal_end = self.sample_rate * seizure.end_time
-                                self.interictal.extend(self.create_windows_for_segment(
-                                    record.fileid, filename, prev_end, preictal_start, 0,self.channel_labels))
-                                self.preictal.extend(self.create_windows_for_segment(
-                                    record.fileid, filename,preictal_start, ictal_start, 1,self.channel_labels))
-                                self.ictal.extend(self.create_windows_for_segment(
-                                    record.fileid, filename, ictal_start, ictal_end, 2,self.channel_labels))
-                                prev_end = ictal_end
-                            else:
-                                ictal_start = self.sample_rate * seizure.start_time
-                                ictal_end = self.sample_rate * seizure.end_time
-                                self.interictal.extend(self.create_windows_for_segment(
-                                    record.fileid, filename, prev_end, ictal_start, 0,self.channel_labels))
-                                self.ictal.extend(self.create_windows_for_segment(
-                                    record.fileid, filename, ictal_start, ictal_end, 1,self.channel_labels))
-                                prev_end = ictal_end
-                    self.interictal.extend(self.create_windows_for_segment(
-                            record.fileid, filename, prev_end, end_of_file, 0,self.channel_labels))
-            except Exception as e:
-                print(e)
-                continue
+            if f"{self.subject}/{record.fileid}" in self.records:
+                filename = os.path.join(self.data_dir, self.subject, record.fileid)
+                prev_end = 0
+                    
+                if record.duration is None:
+                    duration = self.get_record_duration(filename)
+                else:
+                    duration = int(record.duration.total_seconds())
+                end_of_file = duration * self.sample_rate
+                if len(record.seizures) > 0:
+                    seizures = []
+                    for seizure in record.seizures:
+                        if self.multiclass:
+                            preictal_start = max(self.sample_rate * (seizure.start_time - self.preictal_length), 0)
+                            ictal_start = self.sample_rate * seizure.start_time
+                            ictal_end = self.sample_rate * seizure.end_time
+                            self.interictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename, prev_end, preictal_start, 0,self.channels))
+                            self.preictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename,preictal_start, ictal_start, 1,self.channels))
+                            self.ictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename, ictal_start, ictal_end, 2,self.channels))
+                            prev_end = ictal_end
+                        else:
+                            ictal_start = self.sample_rate * seizure.start_time
+                            ictal_end = self.sample_rate * seizure.end_time
+                            self.interictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename, prev_end, ictal_start, 0,self.channels))
+                            self.ictal.extend(self.create_windows_for_segment(
+                                    record.fileid, filename, ictal_start, ictal_end, 1,self.channels))
+                            prev_end = ictal_end
+                self.interictal.extend(self.create_windows_for_segment(
+                            record.fileid, filename, prev_end, end_of_file, 0,self.channels))
         #self.num_channels = num_channels
                 
     def get_record_duration(self, recordfile):
@@ -252,7 +262,7 @@ class XGBoostTrainer:
             print(sum(preds==testY)/len(testY))
 
 
-run = False
+run = True
 if run:
     m = XGBoostTrainer()
     m.train_all()
@@ -275,14 +285,14 @@ if run:
     cm_display2 = ConfusionMatrixDisplay(cm2).plot()
 
 if run:
-    fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=2)#, pos_label=m.model.classes_[1])
+    fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=1)#, pos_label=m.model.classes_[1])
     roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
     r = roc_auc_score(y_true,y_pred_class)
     r2 = roc_auc_score(y_true,y_pred_null)
     print(r,r2)
 
-    #fpr = fp/(fp+tn)
-    #print("False positives per day: " + str(fpr/((fp+tn)/256/60)*24))
+    fpr = fp/(fp+tn)
+    print("False positives per day: " + str(fpr/((fp+tn)/256/60)*24))
 
 if run: 
     print(classification_report(y_true,y_pred_class))
