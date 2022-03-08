@@ -279,23 +279,50 @@ if run:
 
     cm = confusion_matrix(y_true, y_pred_class)
     cm2 = confusion_matrix(y_true, y_pred_null)
+    
+    FP = cm.sum(axis=0) - np.diag(cm)  
+    FN = cm.sum(axis=1) - np.diag(cm)
+    TP = np.diag(cm)
+    TN = cm.sum() - (FP + FN + TP)
+
+    FP = FP.astype(float)
+    FN = FN.astype(float)
+    TP = TP.astype(float)
+    TN = TN.astype(float)
+
+    # Sensitivity, hit rate, recall, or true positive rate
+    TPR = TP/(TP+FN)
+    # Specificity or true negative rate
+    TNR = TN/(TN+FP) 
+    # Precision or positive predictive value
+    PPV = TP/(TP+FP)
+    # Negative predictive value
+    NPV = TN/(TN+FN)
+    # Fall out or false positive rate
+    FPR = FP/(FP+TN)
+    # False negative rate
+    FNR = FN/(TP+FN)
+    # False discovery rate
+    FDR = FP/(TP+FP)
+    # Overall accuracy
+    ACC = (TP+TN)/(TP+FP+FN+TN)
     #tn, fp, fn, tp = cm.ravel()
 
     cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Preictal','Ictal']).plot()
-    cm_display2 = ConfusionMatrixDisplay(cm2).plot()
+    #cm_display2 = ConfusionMatrixDisplay(cm2).plot()
 
 if run:
     fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=1)#, pos_label=m.model.classes_[1])
     roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
-    r = roc_auc_score(y_true,y_pred_class)
-    r2 = roc_auc_score(y_true,y_pred_null)
+    #r = roc_auc_score(y_true,y_pred_class)
+    #r2 = roc_auc_score(y_true,y_pred_null)
     print(r,r2)
-
-    fpr = fp/(fp+tn)
-    print("False positives per day: " + str(fpr/((fp+tn)/256/60)*24))
+    print("False positives per day: " + str(FPR/((FP+TN)/256/60)*24))
 
 if run: 
     print(classification_report(y_true,y_pred_class))
     print(classification_report(y_true,y_pred_null))
+
+FP
 
 
