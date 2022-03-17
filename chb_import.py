@@ -285,6 +285,8 @@ class XGBoostTrainer:
             self.labels.append(testY)
                 
             print(sum(preds==testY)/len(testY))
+            
+#from divik.cluster import KMeans
 
 class KMeansFitter:
     def __init__(self):
@@ -368,7 +370,7 @@ class KMeansFitter:
 
 class ParameterSearch:
     def __init__(self,trainer_type = 'KMeans'):
-        self.window_length = [1,3,5,7,9]
+        self.window_length = [5]#[1,3,5,7,9]
         self.results = []
         self.trainer_type = trainer_type
         
@@ -418,6 +420,14 @@ class ParameterSearch:
         #tn, fp, fn, tp = cm.ravel()
 
         cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Ictal']).plot()
+        
+        fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=1)#, pos_label=m.model.classes_[1])
+        roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
+        r = roc_auc_score(y_true,y_pred_class)
+        #r2 = roc_auc_score(y_true,y_pred_null)
+        print(r)
+        print("False positives per day: " + str(FPR/((FP+TN)/256/60)*24))
+        
         print(classification_report(y_true,y_pred_class))
 
     
@@ -433,12 +443,7 @@ if run:
 
 ps = ParameterSearch()
 ps.results = p.results
-ps.summarize_all()
+p = ps
+p.summarize_all()
 
-if run:
-    fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=1)#, pos_label=m.model.classes_[1])
-    roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
-    r = roc_auc_score(y_true,y_pred_class)
-    r2 = roc_auc_score(y_true,y_pred_null)
-    print(r,r2)
-    print("False positives per day: " + str(FPR/((FP+TN)/256/60)*24))
+
