@@ -22,6 +22,7 @@ from sklearn import metrics
 from chb_utils import parse_summary_file, parse_summary_file_chb24
 import os
 import random
+import hdbscan
 
 
 class DataWindow:
@@ -58,7 +59,7 @@ class DataWindow:
 class ChbDataset(Dataset):
     def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',
                  seizures_only=True,sample_rate=256,subject='chb01',mode='train',
-                 window_length=5, preictal_length=300, sampler='all', welch_features=False,
+                 window_length=0.703125, preictal_length=300, sampler='all', welch_features=False,
                  multiclass=True): 
         ### other sampler option is "equal"
         'Initialization'
@@ -81,6 +82,10 @@ class ChbDataset(Dataset):
         self.channels = ['FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1',
                                'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2',
                                'FZ-CZ', 'CZ-PZ', 'P7-T7', 'T7-FT9', 'FT9-FT10', 'FT10-T8', 'T8-P8']
+
+        #self.bands = [0.5,3.5,6.5,9.5,12.5,15.5,18.5,21.5,24.5]
+        self.bands = [4,8,13,30,60,90]
+
         random.seed(1000)
         self.get_records() 
         self.get_labeled_windows()
@@ -174,7 +179,7 @@ class ChbDataset(Dataset):
         
     def create_windows_for_segment(self, recordid, recordfile, start_index, end_index, label,channels):
         windows = []
-        window_size = self.window_length * self.sample_rate
+        window_size = int(self.window_length * self.sample_rate)
         for i in range(start_index, end_index - window_size + 1, window_size):
             windows.append(DataWindow(recordid, recordfile, i, i + window_size, label,channels))
         return windows
@@ -216,29 +221,33 @@ class ChbDataset(Dataset):
         data = window.get_data()
         label = window.label
         if self.welch_features:
-            sample = self.__welch_features(data)
-            data = sample.flatten()
+            data = self.__welch_features(data)
+            data = data.flatten()
         return data, label
     
     def all_data(self):
         data = [self.__getitem__(i) for i in range(len(self))]
         #print(data[0])
         allY = np.concatenate([[x[1] for x in data]])
-        allX = np.array([x[0] for x in data])
+        
+        allX = np.array([x[0] for x in data]) if self.welch_features == True else np.array([x[0].flatten() for x in data])
         return allX,allY
     
     def __welch_features(self, sample):
-        p_f, p_Sxx = welch(sample, fs=self.sample_rate, axis=1)
+        p_f, p_Sxx = welch(sample, fs=self.sample_rate, axis=1, window=self.bands)
         p_SS = np.log1p(p_Sxx)
-        arr = p_SS[:] / np.max(p_SS)
+        #print(p_SS)
+        arr = p_SS[:] / np.max(p_SS) if np.max(p_SS) != 0 else 1.0
         return arr
 
 
+# +
 class XGBoostTrainer:
     def __init__(self):
-        self.model = XGBClassifier(objective='binary:hinge', learning_rate = 0.1,
-              max_depth = 1, n_estimators = 330)
+        self.model = XGBClassifier(objective='binary:hinge', learning_rate = 0.01)#,max_depth = 1, n_estimators = 330)
         self.subjects = ['chb0'+str(i) for i in range(1,10)] + ['chb' + str(i) for i in range(10,25)]
+        self.subjects.remove('chb12')
+
         self.preds = []
         self.labels = []
         
@@ -246,8 +255,8 @@ class XGBoostTrainer:
         
         for subject in self.subjects:
             print('Training ' + subject)
-            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=True)
-            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=True)
+            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False)
+            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False)
         
             allX,allY = train.all_data()
             
@@ -260,11 +269,97 @@ class XGBoostTrainer:
             self.labels.append(testY)
                 
             print(sum(preds==testY)/len(testY))
+from sklearn.cluster import KMeans
+from sklearn.cluster import SpectralClustering
+from hdbscan import flat
+
+class KMeansFitter:
+    def __init__(self):
+
+        #self.model = hdbscan.HDBSCAN(prediction_data = True)
+        
+        #self.model = SpectralClustering(n_clusters=2)
+        self.model = KMeans(n_clusters=2)
+        
+        self.subjects = ['chb0'+str(i) for i in range(1,10)] + ['chb' + str(i) for i in range(10,25)]
+        self.subjects.remove('chb12')
+        self.preds = []
+        self.labels = []
+        
+    def train_all(self):
+
+        for subject in self.subjects:
+            print('Training ' + subject)
+            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False)
+            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False)
+        
+            allX,allY = train.all_data()
+            
+        
+            
+            #self.model = flat.HDBSCAN_flat(allX, 2, prediction_data=True)
+            self.model.fit(allX)
+            
+            testX,testY = tests.all_data()
+            
+            #preds, _ = flat.approximate_predict_flat(self.model, testX, 2)
+            preds = self.model.predict(testX)
+            
+            preds = preds if sum(preds==testY)/len(testY) > sum(preds!=testY)/len(testY) else np.logical_not(preds)
+            print(preds)
+            #preds, _ = hdbscan.approximate_predict(self.model, testX)
+            self.preds.append((preds))
+            self.labels.append(testY)
+            
+            
+                
+            print(sum(preds==testY)/len(testY))
+            
+    def train_all_group(self):
+        
+        train_groupX = []
+        train_groupY = []
+        test_groupX = []
+
+        for subject in self.subjects:
+            print('Training ' + subject)
+            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False)
+            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False)
+        
+            trainX,trainY = train.all_data()
+            testX,testY = tests.all_data()
+            
+            
+            train_groupX.append(trainX)
+            train_groupY.append(trainY)
+ 
+            test_groupX.append(testX)
+            self.labels.append(testY)
+            
+        self.model = self.model.fit(np.concatenate(train_groupX))
+            
+        preds = self.model.predict(np.concatenate(test_groupX))
+        print(preds)
+            
+        #preds = preds if sum(preds==testY)/len(testY) > sum(preds!=testY)/len(testY) else np.logical_not(preds)
+        #print(preds)
+        self.preds = preds 
+        self.labels.append(testY)
+        
+        self.labels = np.concatenate(self.labels)   
+                
+        print(sum(preds==testY)/len(testY))        
+        
+# -
+
+class XGBoostParameterSearch:
+    def __init__(self):
+        pass
 
 
 run = True
 if run:
-    m = XGBoostTrainer()
+    m = KMeansFitter()
     m.train_all()
 
 from sklearn.metrics import confusion_matrix, plot_confusion_matrix, roc_curve, ConfusionMatrixDisplay, RocCurveDisplay,roc_auc_score, f1_score,classification_report
@@ -274,6 +369,8 @@ import matplotlib.pyplot as plt
 if run:
     y_true = np.concatenate(m.labels)
     y_pred_class = np.concatenate(m.preds)
+    
+    #y_true = y_true[:5970]
 
     y_pred_null = np.zeros_like(y_pred_class)
 
@@ -308,7 +405,7 @@ if run:
     ACC = (TP+TN)/(TP+FP+FN+TN)
     #tn, fp, fn, tp = cm.ravel()
 
-    cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Preictal','Ictal']).plot()
+    cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Ictal']).plot()
     #cm_display2 = ConfusionMatrixDisplay(cm2).plot()
 
 if run:
@@ -322,7 +419,5 @@ if run:
 if run: 
     print(classification_report(y_true,y_pred_class))
     print(classification_report(y_true,y_pred_null))
-
-FP
 
 
