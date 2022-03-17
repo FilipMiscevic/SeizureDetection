@@ -13,9 +13,11 @@
 #     name: python3
 # ---
 
+# +
 from torch.utils.data import Dataset
 import pyedflib
 import numpy as np
+import pandas as pd
 from scipy.signal import spectrogram, welch
 from xgboost import XGBClassifier, plot_tree
 from sklearn import metrics
@@ -23,10 +25,20 @@ from chb_utils import parse_summary_file, parse_summary_file_chb24
 import os
 import random
 import hdbscan
+import math
 
+from sklearn.metrics import confusion_matrix, plot_confusion_matrix, roc_curve, ConfusionMatrixDisplay, RocCurveDisplay,roc_auc_score, f1_score,classification_report
+import matplotlib.pyplot as plt
+            
+from sklearn.cluster import KMeans
+from sklearn.cluster import SpectralClustering
+from hdbscan import flat
+
+
+# -
 
 class DataWindow:
-    def __init__(self, record_id, record_file, start_index, end_index, label, channels):
+    def __init__(self, record_id, record_file, start_index, end_index, label, channels,):
         self.record_id = record_id
         self.record_file = record_file
         self.start_index = start_index
@@ -59,8 +71,8 @@ class DataWindow:
 class ChbDataset(Dataset):
     def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',
                  seizures_only=True,sample_rate=256,subject='chb01',mode='train',
-                 window_length=0.703125, preictal_length=300, sampler='all', welch_features=False,
-                 multiclass=True): 
+                 window_length=9, preictal_length=300, sampler='all', welch_features=False,
+                 multiclass=True, sliding=False): 
         ### other sampler option is "equal"
         'Initialization'
         self.sample_rate = sample_rate
@@ -75,6 +87,7 @@ class ChbDataset(Dataset):
         self.record_type = 'RECORDS-WITH-SEIZURES' if seizures_only else 'RECORDS'
         self.records = None
         self.num_channels = 23
+        self.sliding = sliding
         self.preictal = []
         self.ictal = []
         self.interictal = []
@@ -217,27 +230,30 @@ class ChbDataset(Dataset):
     def __getitem__(self, index):
         'Generates one sample of data, which is one window of length window_length'
         # Select sample
+        pre    = self.windows[index - 1 if index - 1 >= 0 else 0]
         window = self.windows[index]
-        data = window.get_data()
-        label = window.label
+        post   = self.windows[index + 1 if index + 1 < len(self) else len(self)-1]
+        
+        data   = np.concatenate([pre.get_data(), window.get_data(), post.get_data()]) if self.sliding else window.get_data()
+        label  = window.label
         if self.welch_features:
-            data = self.__welch_features(data)
+            data = np.array(self.__welch_features(data))
             data = data.flatten()
         return data, label
     
     def all_data(self):
         data = [self.__getitem__(i) for i in range(len(self))]
-        #print(data[0])
+
         allY = np.concatenate([[x[1] for x in data]])
-        
         allX = np.array([x[0] for x in data]) if self.welch_features == True else np.array([x[0].flatten() for x in data])
+        
         return allX,allY
     
     def __welch_features(self, sample):
         p_f, p_Sxx = welch(sample, fs=self.sample_rate, axis=1, window=self.bands)
         p_SS = np.log1p(p_Sxx)
-        #print(p_SS)
         arr = p_SS[:] / np.max(p_SS) if np.max(p_SS) != 0 else 1.0
+        
         return arr
 
 
@@ -269,9 +285,6 @@ class XGBoostTrainer:
             self.labels.append(testY)
                 
             print(sum(preds==testY)/len(testY))
-from sklearn.cluster import KMeans
-from sklearn.cluster import SpectralClustering
-from hdbscan import flat
 
 class KMeansFitter:
     def __init__(self):
@@ -283,15 +296,16 @@ class KMeansFitter:
         
         self.subjects = ['chb0'+str(i) for i in range(1,10)] + ['chb' + str(i) for i in range(10,25)]
         self.subjects.remove('chb12')
+        #self.subjects.remove('chb19')
         self.preds = []
         self.labels = []
-        
-    def train_all(self):
+            
+    def train_all(self,window_length=5):
 
         for subject in self.subjects:
             print('Training ' + subject)
-            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False)
-            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False)
+            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False,window_length=window_length)
+            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False,window_length=window_length)
         
             allX,allY = train.all_data()
             
@@ -352,72 +366,79 @@ class KMeansFitter:
         
 # -
 
-class XGBoostParameterSearch:
-    def __init__(self):
-        pass
+class ParameterSearch:
+    def __init__(self,trainer_type = 'KMeans'):
+        self.window_length = [1,3,5,7,9]
+        self.results = []
+        self.trainer_type = trainer_type
+        
+    def search(self):
+        
+        for wl in self.window_length:        
+            trainer = KMeansFitter() if self.trainer_type == 'KMeans' else XGBoostTrainer()
+            trainer.train_all(window_length = wl)
+            
+            self.results.append((trainer.preds,trainer.labels))
+        
+    def summarize(self,idx):
+        y_true = np.concatenate(self.results[idx][0])
+        y_pred_class = np.concatenate(self.results[idx][1])
 
+        #y_pred_null = np.zeros_like(y_pred_class)
 
-run = True
-if run:
-    m = KMeansFitter()
-    m.train_all()
+        cm = confusion_matrix(y_true, y_pred_class)
+        #cm2 = confusion_matrix(y_true, y_pred_null)
 
-from sklearn.metrics import confusion_matrix, plot_confusion_matrix, roc_curve, ConfusionMatrixDisplay, RocCurveDisplay,roc_auc_score, f1_score,classification_report
-#import seaborn as sn
-import pandas as pd
-import matplotlib.pyplot as plt
-if run:
-    y_true = np.concatenate(m.labels)
-    y_pred_class = np.concatenate(m.preds)
+        FP = cm.sum(axis=0) - np.diag(cm)  
+        FN = cm.sum(axis=1) - np.diag(cm)
+        TP = np.diag(cm)
+        TN = cm.sum() - (FP + FN + TP)
+
+        FP = FP.astype(float)
+        FN = FN.astype(float)
+        TP = TP.astype(float)
+        TN = TN.astype(float)
+
+        # Sensitivity, hit rate, recall, or true positive rate
+        TPR = TP/(TP+FN)
+        # Specificity or true negative rate
+        TNR = TN/(TN+FP) 
+        # Precision or positive predictive value
+        PPV = TP/(TP+FP)
+        # Negative predictive value
+        NPV = TN/(TN+FN)
+        # Fall out or false positive rate
+        FPR = FP/(FP+TN)
+        # False negative rate
+        FNR = FN/(TP+FN)
+        # False discovery rate
+        FDR = FP/(TP+FP)
+        # Overall accuracy
+        ACC = (TP+TN)/(TP+FP+FN+TN)
+        #tn, fp, fn, tp = cm.ravel()
+
+        cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Ictal']).plot()
+        print(classification_report(y_true,y_pred_class))
+
     
-    #y_true = y_true[:5970]
+    def summarize_all(self):
+        for i in range(len(self.window_length)):
+            print(f"Window length (s): {self.window_length[i]}")
+            self.summarize(i)
 
-    y_pred_null = np.zeros_like(y_pred_class)
+run = False
+if run:
+    p = ParameterSearch()
+    p.search()
 
-    cm = confusion_matrix(y_true, y_pred_class)
-    cm2 = confusion_matrix(y_true, y_pred_null)
-    
-    FP = cm.sum(axis=0) - np.diag(cm)  
-    FN = cm.sum(axis=1) - np.diag(cm)
-    TP = np.diag(cm)
-    TN = cm.sum() - (FP + FN + TP)
-
-    FP = FP.astype(float)
-    FN = FN.astype(float)
-    TP = TP.astype(float)
-    TN = TN.astype(float)
-
-    # Sensitivity, hit rate, recall, or true positive rate
-    TPR = TP/(TP+FN)
-    # Specificity or true negative rate
-    TNR = TN/(TN+FP) 
-    # Precision or positive predictive value
-    PPV = TP/(TP+FP)
-    # Negative predictive value
-    NPV = TN/(TN+FN)
-    # Fall out or false positive rate
-    FPR = FP/(FP+TN)
-    # False negative rate
-    FNR = FN/(TP+FN)
-    # False discovery rate
-    FDR = FP/(TP+FP)
-    # Overall accuracy
-    ACC = (TP+TN)/(TP+FP+FN+TN)
-    #tn, fp, fn, tp = cm.ravel()
-
-    cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Ictal']).plot()
-    #cm_display2 = ConfusionMatrixDisplay(cm2).plot()
+ps = ParameterSearch()
+ps.results = p.results
+ps.summarize_all()
 
 if run:
     fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=1)#, pos_label=m.model.classes_[1])
     roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
-    #r = roc_auc_score(y_true,y_pred_class)
-    #r2 = roc_auc_score(y_true,y_pred_null)
+    r = roc_auc_score(y_true,y_pred_class)
+    r2 = roc_auc_score(y_true,y_pred_null)
     print(r,r2)
     print("False positives per day: " + str(FPR/((FP+TN)/256/60)*24))
-
-if run: 
-    print(classification_report(y_true,y_pred_class))
-    print(classification_report(y_true,y_pred_null))
-
-
