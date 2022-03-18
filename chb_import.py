@@ -26,7 +26,7 @@ import os
 import random
 import hdbscan
 import math
-
+import yasa
 from sklearn.metrics import confusion_matrix, plot_confusion_matrix, roc_curve, ConfusionMatrixDisplay, RocCurveDisplay,roc_auc_score, f1_score,classification_report
 import matplotlib.pyplot as plt
             
@@ -71,7 +71,7 @@ class DataWindow:
 class ChbDataset(Dataset):
     def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',
                  seizures_only=True,sample_rate=256,subject='chb01',mode='train',
-                 window_length=9, preictal_length=300, sampler='all', welch_features=False,
+                 window_length=5, preictal_length=300, sampler='all', welch_features=False,
                  multiclass=True, sliding=False): 
         ### other sampler option is "equal"
         'Initialization'
@@ -116,14 +116,17 @@ class ChbDataset(Dataset):
         #filter based on subject
         self.records = [record for record in self.records if self.subject in record]
         
+        limit_file = None
         if self.mode == 'train':
             limit_file = 'TRAIN_RECORDS.txt'
-        else:
+        elif self.mode == 'test':
             limit_file = 'TEST_RECORDS.txt'
-        with open(limit_file) as f:
-            limit_records = set(f.read().strip().splitlines())
-            records = set(self.records)
-        self.records = list(records.intersection(limit_records))
+            
+        if limit_file:
+            with open(limit_file) as f:
+                limit_records = set(f.read().strip().splitlines())
+                records = set(self.records)
+            self.records = list(records.intersection(limit_records))
         
         for record in self.records:
             f = pyedflib.EdfReader(self.data_dir+ '/'+record)
@@ -254,7 +257,63 @@ class ChbDataset(Dataset):
         p_SS = np.log1p(p_Sxx)
         arr = p_SS[:] / np.max(p_SS) if np.max(p_SS) != 0 else 1.0
         
+        #bands=[[0, 4], [4, 8],[8,13],[30,60],[60,90]]
+        
+        #arr = [self.__bandpower(sample,self.sample_rate,band) for band in bands]
+        
         return arr
+    
+    def __bandpower(self,data, sf, band, window_sec=1, relative=False):
+        """Compute the average power of the signal x in a specific frequency band.
+
+        Parameters
+        ----------
+        data : 1d-array
+            Input signal in the time-domain.
+        sf : float
+            Sampling frequency of the data.
+        band : list
+            Lower and upper frequencies of the band of interest.
+        window_sec : float
+            Length of each window in seconds.
+            If None, window_sec = (1 / min(band)) * 2
+        relative : boolean
+            If True, return the relative power (= divided by the total power of the signal).
+            If False (default), return the absolute power.
+
+        Return
+        ------
+        bp : float
+            Absolute or relative band power.
+        """
+        from scipy.integrate import simps
+        band = np.asarray(band)
+        low, high = band
+
+        # Define window length
+        if window_sec is not None:
+            nperseg = window_sec * sf
+        else:
+            nperseg = (2 / low) * sf
+
+        # Compute the modified periodogram (Welch)
+        freqs, psd = welch(data, sf, nperseg=nperseg)
+
+        # Frequency resolution
+        freq_res = freqs[1] - freqs[0]
+
+        # Find closest indices of band in frequency vector
+        idx_band = np.logical_and(freqs >= low, freqs <= high)
+
+        # Integral approximation of the spectrum using Simpson's rule.
+        bp = 0
+        for i in range(len(psd)):
+            bp += simps(psd[i,idx_band], dx=freq_res)
+
+        if relative:
+            bp /= simps(psd, dx=freq_res)
+        return bp
+
 
 
 # +
@@ -267,12 +326,12 @@ class XGBoostTrainer:
         self.preds = []
         self.labels = []
         
-    def train_all(self):
+    def train_all(self,window_length=5):
         
         for subject in self.subjects:
             print('Training ' + subject)
-            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False)
-            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False)
+            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False,window_length=window_length)
+            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False,window_length=window_length)
         
             allX,allY = train.all_data()
             
@@ -417,7 +476,8 @@ class ParameterSearch:
         FDR = FP/(TP+FP)
         # Overall accuracy
         ACC = (TP+TN)/(TP+FP+FN+TN)
-        #tn, fp, fn, tp = cm.ravel()
+        
+        tn, fp, fn, tp = cm.ravel()
 
         cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Ictal']).plot()
         
@@ -426,7 +486,7 @@ class ParameterSearch:
         r = roc_auc_score(y_true,y_pred_class)
         #r2 = roc_auc_score(y_true,y_pred_null)
         print(r)
-        print("False positives per day: " + str(FPR/((FP+TN)/256/60)*24))
+        print("False positives per day: " + str((fp/(fp+tn))/((fp+tn)/256/60)*24))
         
         print(classification_report(y_true,y_pred_class))
 
@@ -441,9 +501,27 @@ if run:
     p = ParameterSearch()
     p.search()
 
-ps = ParameterSearch()
-ps.results = p.results
-p = ps
+#ps = ParameterSearch()
+#ps.results = p.results
+#p = ps
 p.summarize_all()
+
+train = ChbDataset(mode='all',subject='chb10', welch_features=True, sampler='equal', multiclass=False,window_length=5)
+ad = train.all_data()
+
+plt.imshow(ad[0].T)
+print(ad[0].shape)
+
+plt.plot(ad[1].T)
+
+run = False
+if run:
+    x = ParameterSearch('XGBoostTrainer')
+    x.search()
+
+#xx = ParameterSearch()
+#xx.results = x.results
+#x = xx
+x.summarize_all()
 
 
