@@ -29,9 +29,11 @@ import math
 import yasa
 from sklearn.metrics import confusion_matrix, plot_confusion_matrix, roc_curve, ConfusionMatrixDisplay, RocCurveDisplay,roc_auc_score, f1_score,classification_report
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.neighbors import KNeighborsClassifier
             
-from sklearn.cluster import KMeans
-from sklearn.cluster import SpectralClustering
+from sklearn.cluster import KMeans,SpectralClustering
 from hdbscan import flat
 
 
@@ -71,16 +73,17 @@ class DataWindow:
 class ChbDataset(Dataset):
     def __init__(self, data_dir='./chb-mit-scalp-eeg-database-1.0.0/',
                  seizures_only=True,sample_rate=256,subject='chb01',mode='train',
-                 window_length=5, preictal_length=300, sampler='all', welch_features=False,
-                 multiclass=True, sliding=False): 
+                 window_length=5, preictal_length=300, sampler='all', which_features='welch',
+                 multiclass=False, sliding=False): 
         ### other sampler option is "equal"
         'Initialization'
+        self.pca_features = True if 'PCA' in which_features else False
+        self.welch_features = True if 'welch' in which_features else False
         self.sample_rate = sample_rate
         self.subject = subject
         self.data_dir = data_dir
         self.window_length = window_length
         self.preictal_length = preictal_length
-        self.welch_features = welch_features
         self.multiclass = multiclass
         self.sampler = sampler
         self.mode = mode
@@ -97,7 +100,7 @@ class ChbDataset(Dataset):
                                'FZ-CZ', 'CZ-PZ', 'P7-T7', 'T7-FT9', 'FT9-FT10', 'FT10-T8', 'T8-P8']
 
         #self.bands = [0.5,3.5,6.5,9.5,12.5,15.5,18.5,21.5,24.5]
-        self.bands = [4,8,13,30,60,90]
+        self.bands = [0,4,8,13,30,60,90]
 
         random.seed(1000)
         self.get_records() 
@@ -204,6 +207,9 @@ class ChbDataset(Dataset):
         #print(self.sampler)
         if self.sampler == 'all':
             self.windows = self.interictal + self.preictal + self.ictal
+        elif self.sampler == 'equal_deterministic' and not self.multiclass:
+            num_samples = min([len(self.interictal), len(self.ictal)])
+            self.windows = self.interictal[-num_samples:] + self.ictal        
         elif self.sampler == 'equal' and self.multiclass:
             num_samples = min([len(self.preictal), len(self.interictal), len(self.ictal)])
             self.windows = random.sample(self.interictal, num_samples) \
@@ -215,20 +221,20 @@ class ChbDataset(Dataset):
             self.windows = random.sample(self.interictal, num_samples) \
                         + random.sample(self.ictal, num_samples)
         else:
-            raise ValueError("Sampler must be all or equal")
+            raise ValueError("Sampler must be all, equal or 'equal_deterministic and not multiclass'")
             
     def __len__(self):
         'Denotes the total number of samples'
         if self.sampler == 'all':
             return len(self.preictal) + len(self.interictal) + len(self.ictal)
-        elif self.sampler == 'equal' and self.multiclass:
+        elif 'equal' in self.sampler and self.multiclass:
             smallest = min([len(self.preictal), len(self.interictal), len(self.ictal)])
             return smallest * 3
-        elif self.sampler == 'equal' and not self.multiclass:
+        elif 'equal' in self.sampler and not self.multiclass:
             smallest = min([len(self.interictal), len(self.ictal)])
             return smallest * 2
         else:
-            raise ValueError("Sampler must be all or equal")
+            raise ValueError("Sampler must be all or equal or equal_deterministic")
         
     def __getitem__(self, index):
         'Generates one sample of data, which is one window of length window_length'
@@ -241,14 +247,18 @@ class ChbDataset(Dataset):
         label  = window.label
         if self.welch_features:
             data = np.array(self.__welch_features(data))
-            data = data.flatten()
+        #print(data.shape)
+        if self.pca_features:
+            data = self.__pca(data.T)
+            #print(data.shape)
+        data = data.flatten()
         return data, label
     
     def all_data(self):
         data = [self.__getitem__(i) for i in range(len(self))]
 
         allY = np.concatenate([[x[1] for x in data]])
-        allX = np.array([x[0] for x in data]) if self.welch_features == True else np.array([x[0].flatten() for x in data])
+        allX = np.array([x[0] for x in data]) #if self.welch_features == True else np.array([x[0].flatten() for x in data])
         
         return allX,allY
     
@@ -263,187 +273,54 @@ class ChbDataset(Dataset):
         
         return arr
     
-    def __bandpower(self,data, sf, band, window_sec=1, relative=False):
-        """Compute the average power of the signal x in a specific frequency band.
-
-        Parameters
-        ----------
-        data : 1d-array
-            Input signal in the time-domain.
-        sf : float
-            Sampling frequency of the data.
-        band : list
-            Lower and upper frequencies of the band of interest.
-        window_sec : float
-            Length of each window in seconds.
-            If None, window_sec = (1 / min(band)) * 2
-        relative : boolean
-            If True, return the relative power (= divided by the total power of the signal).
-            If False (default), return the absolute power.
-
-        Return
-        ------
-        bp : float
-            Absolute or relative band power.
-        """
-        from scipy.integrate import simps
-        band = np.asarray(band)
-        low, high = band
-
-        # Define window length
-        if window_sec is not None:
-            nperseg = window_sec * sf
-        else:
-            nperseg = (2 / low) * sf
-
-        # Compute the modified periodogram (Welch)
-        freqs, psd = welch(data, sf, nperseg=nperseg)
-
-        # Frequency resolution
-        freq_res = freqs[1] - freqs[0]
-
-        # Find closest indices of band in frequency vector
-        idx_band = np.logical_and(freqs >= low, freqs <= high)
-
-        # Integral approximation of the spectrum using Simpson's rule.
-        bp = 0
-        for i in range(len(psd)):
-            bp += simps(psd[i,idx_band], dx=freq_res)
-
-        if relative:
-            bp /= simps(psd, dx=freq_res)
-        return bp
+    def __pca(self,X):
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X.T)
+        pca = PCA(n_components=4)
+        pca.fit(X)
+        X_pca = pca.transform(X)
+        
+        return X_pca.T
 
 
-
-# +
-class XGBoostTrainer:
-    def __init__(self):
-        self.model = XGBClassifier(objective='binary:hinge', learning_rate = 0.01)#,max_depth = 1, n_estimators = 330)
+class ModelTrainer:
+    def __init__(self,model,supervised):
         self.subjects = ['chb0'+str(i) for i in range(1,10)] + ['chb' + str(i) for i in range(10,25)]
         self.subjects.remove('chb12')
 
-        self.preds = []
+        self.preds  = []
         self.labels = []
+        self.kwords = {}
+        self.model      = model
+        self.supervised = supervised
         
-    def train_all(self,window_length=5):
+    def train_all(self,kwords):
+        self.kwords = kwords
         
         for subject in self.subjects:
             print('Training ' + subject)
-            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False,window_length=window_length)
-            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False,window_length=window_length)
-        
-            allX,allY = train.all_data()
+            train = ChbDataset(mode='train',subject=subject,**kwords)
+            tests = ChbDataset(mode ='test',subject=subject,**kwords)
             
-            self.model.fit(allX, allY)
+            allX,allY = train.all_data()            
+            
+            self.model.fit(allX, allY) if self.supervised else self.model.fit(allX)
             
             testX,testY = tests.all_data()
 
             preds = self.model.predict(testX)
-            self.preds.append((preds))
-            self.labels.append(testY)
-                
-            print(sum(preds==testY)/len(testY))
-            
-#from divik.cluster import KMeans
-
-class KMeansFitter:
-    def __init__(self):
-
-        #self.model = hdbscan.HDBSCAN(prediction_data = True)
-        
-        #self.model = SpectralClustering(n_clusters=2)
-        self.model = KMeans(n_clusters=2)
-        
-        self.subjects = ['chb0'+str(i) for i in range(1,10)] + ['chb' + str(i) for i in range(10,25)]
-        self.subjects.remove('chb12')
-        #self.subjects.remove('chb19')
-        self.preds = []
-        self.labels = []
-            
-    def train_all(self,window_length=5):
-
-        for subject in self.subjects:
-            print('Training ' + subject)
-            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False,window_length=window_length)
-            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False,window_length=window_length)
-        
-            allX,allY = train.all_data()
-            
-        
-            
-            #self.model = flat.HDBSCAN_flat(allX, 2, prediction_data=True)
-            self.model.fit(allX)
-            
-            testX,testY = tests.all_data()
-            
-            #preds, _ = flat.approximate_predict_flat(self.model, testX, 2)
-            preds = self.model.predict(testX)
-            
             preds = preds if sum(preds==testY)/len(testY) > sum(preds!=testY)/len(testY) else np.logical_not(preds)
-            print(preds)
-            #preds, _ = hdbscan.approximate_predict(self.model, testX)
+
             self.preds.append((preds))
             self.labels.append(testY)
-            
-            
                 
             print(sum(preds==testY)/len(testY))
             
-    def train_all_group(self):
-        
-        train_groupX = []
-        train_groupY = []
-        test_groupX = []
-
-        for subject in self.subjects:
-            print('Training ' + subject)
-            train = ChbDataset(mode='train',subject=subject, welch_features=True, sampler='equal', multiclass=False)
-            tests = ChbDataset(mode='test' ,subject=subject, welch_features=True, sampler='equal', multiclass=False)
-        
-            trainX,trainY = train.all_data()
-            testX,testY = tests.all_data()
-            
-            
-            train_groupX.append(trainX)
-            train_groupY.append(trainY)
- 
-            test_groupX.append(testX)
-            self.labels.append(testY)
-            
-        self.model = self.model.fit(np.concatenate(train_groupX))
-            
-        preds = self.model.predict(np.concatenate(test_groupX))
-        print(preds)
-            
-        #preds = preds if sum(preds==testY)/len(testY) > sum(preds!=testY)/len(testY) else np.logical_not(preds)
-        #print(preds)
-        self.preds = preds 
-        self.labels.append(testY)
-        
-        self.labels = np.concatenate(self.labels)   
-                
-        print(sum(preds==testY)/len(testY))        
-        
-# -
-
-class ParameterSearch:
-    def __init__(self,trainer_type = 'KMeans'):
-        self.window_length = [5]#[1,3,5,7,9]
-        self.results = []
-        self.trainer_type = trainer_type
-        
-    def search(self):
-        
-        for wl in self.window_length:        
-            trainer = KMeansFitter() if self.trainer_type == 'KMeans' else XGBoostTrainer()
-            trainer.train_all(window_length = wl)
-            
-            self.results.append((trainer.preds,trainer.labels))
-        
-    def summarize(self,idx):
-        y_true = np.concatenate(self.results[idx][0])
-        y_pred_class = np.concatenate(self.results[idx][1])
+    def summarize(self):
+        if not self.kwords:
+            raise ValueError('train_all must be run before summary is available.')
+        y_true = np.concatenate(self.preds)
+        y_pred_class = np.concatenate(self.labels)
 
         #y_pred_null = np.zeros_like(y_pred_class)
 
@@ -479,49 +356,49 @@ class ParameterSearch:
         
         tn, fp, fn, tp = cm.ravel()
 
+        title = f"{self.kwords}"#"['which_features']} feature, {'sliding window' if self.kwords['sliding']}, {self.kwords['sampler']}"
+        
         cm_display = ConfusionMatrixDisplay(cm,display_labels=['Interictal','Ictal']).plot()
+        cm_display.ax_.set_title(title)
+
         
         fpr, tpr, _ = roc_curve(y_true, y_pred_class,pos_label=1)#, pos_label=m.model.classes_[1])
-        roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
+        #roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr).plot()
         r = roc_auc_score(y_true,y_pred_class)
         #r2 = roc_auc_score(y_true,y_pred_null)
+        print(self.model)
+        print(self.kwords)
         print(r)
-        print("False positives per day: " + str((fp/(fp+tn))/((fp+tn)/256/60)*24))
+        print("False positive rate: " + str(fp/(fp+tn)))
         
         print(classification_report(y_true,y_pred_class))
 
-    
-    def summarize_all(self):
-        for i in range(len(self.window_length)):
-            print(f"Window length (s): {self.window_length[i]}")
-            self.summarize(i)
+# +
+experiments = [             
+                            {'sampler':'equal'},
+                           ]
 
-run = False
-if run:
-    p = ParameterSearch()
-    p.search()
+m = [KMeans(n_clusters=2), XGBClassifier(objective='binary:hinge', learning_rate = 0.01), KNeighborsClassifier()]
+s = [False, True, True]
 
-#ps = ParameterSearch()
-#ps.results = p.results
-#p = ps
-p.summarize_all()
+for i,model in enumerate(m):
+    for kwords in experiments:
+        t = ModelTrainer(model,s[i])
+        t.train_all(kwords)
+        t.summarize()
+# -
 
-train = ChbDataset(mode='all',subject='chb10', welch_features=True, sampler='equal', multiclass=False,window_length=5)
+train = ChbDataset(mode='all',subject='chb14', sliding=False, which_features=['welch'], sampler='equal', multiclass=False,window_length=5)
 ad = train.all_data()
+train2 = ChbDataset(mode='all',subject='chb22',sliding=False, which_features=['welch'], sampler='equal', multiclass=False,window_length=5)
+ad2 = train2.all_data()
 
 plt.imshow(ad[0].T)
 print(ad[0].shape)
 
+plt.imshow(ad2[0].T)
+print(ad2[0].shape)
+
 plt.plot(ad[1].T)
-
-run = False
-if run:
-    x = ParameterSearch('XGBoostTrainer')
-    x.search()
-
-#xx = ParameterSearch()
-#xx.results = x.results
-#x = xx
-x.summarize_all()
 
 
