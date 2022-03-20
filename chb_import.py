@@ -32,6 +32,8 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KNeighborsClassifier
+from scipy.integrate import simps
+
             
 from sklearn.cluster import KMeans,SpectralClustering
 from hdbscan import flat
@@ -40,7 +42,7 @@ from hdbscan import flat
 # -
 
 class DataWindow:
-    def __init__(self, record_id, record_file, start_index, end_index, label, channels,):
+    def __init__(self, record_id, record_file, start_index, end_index, label, channels):
         self.record_id = record_id
         self.record_file = record_file
         self.start_index = start_index
@@ -79,6 +81,8 @@ class ChbDataset(Dataset):
         'Initialization'
         self.pca_features = True if 'PCA' in which_features else False
         self.welch_features = True if 'welch' in which_features else False
+        self.band_features = True if 'bands' in which_features else False
+        
         self.sample_rate = sample_rate
         self.subject = subject
         self.data_dir = data_dir
@@ -249,8 +253,10 @@ class ChbDataset(Dataset):
             data = np.array(self.__welch_features(data))
         #print(data.shape)
         if self.pca_features:
-            data = self.__pca(data.T)
+            data = self.__pca(data)
             #print(data.shape)
+        if self.band_features:
+            data = self.__bands(data)
         data = data.flatten()
         return data, label
     
@@ -267,20 +273,74 @@ class ChbDataset(Dataset):
         p_SS = np.log1p(p_Sxx)
         arr = p_SS[:] / np.max(p_SS) if np.max(p_SS) != 0 else 1.0
         
-        #bands=[[0, 4], [4, 8],[8,13],[30,60],[60,90]]
-        
-        #arr = [self.__bandpower(sample,self.sample_rate,band) for band in bands]
-        
         return arr
     
     def __pca(self,X):
         scaler = StandardScaler()
-        X = scaler.fit_transform(X.T)
-        pca = PCA(n_components=4)
+        X = scaler.fit_transform(X)
+        pca = PCA(n_components=2)
         pca.fit(X)
         X_pca = pca.transform(X)
         
-        return X_pca.T
+        return X_pca
+    
+    def __bands(self,sample):
+                
+        bands=[[0, 4], [4, 8],[8,13],[13,30],[30,60],[60,90]]
+        
+        arr = [self.__bandpower(sample,band) for band in bands]
+        
+        return arr
+    
+    def __bandpower(self,data, band, window_sec=1, relative=False):
+        """Compute the average power of the signal x in a specific frequency band.
+        Parameters
+        ----------
+        data : 1d-array
+            Input signal in the time-domain.
+        sf : float
+            Sampling frequency of the data.
+        band : list
+            Lower and upper frequencies of the band of interest.
+        window_sec : float
+            Length of each window in seconds.
+            If None, window_sec = (1 / min(band)) * 2
+        relative : boolean
+            If True, return the relative power (= divided by the total power of the signal).
+            If False (default), return the absolute power.
+        Return
+        ------
+        bp : float
+            Absolute or relative band power.
+        """
+        sf = self.sample_rate
+        band = np.asarray(band)
+        low, high = band
+
+        # Define window length
+        if window_sec is not None:
+            nperseg = window_sec * sf
+        else:
+            nperseg = (2 / low) * sf
+
+        # Compute the modified periodogram (Welch)
+        freqs, psd = welch(data, sf, axis=1, nperseg=nperseg)
+        
+        psd = np.log1p(psd)
+        psd = psd[:] / np.max(psd) if np.max(psd) != 0 else 1.0
+
+        # Frequency resolution
+        freq_res = freqs[1] - freqs[0]
+
+        # Find closest indices of band in frequency vector
+        idx_band = np.logical_and(freqs >= low, freqs <= high)
+
+        # Integral approximation of the spectrum using Simpson's rule.
+        bp = [simps(psd[i,idx_band], dx=freq_res) for i in range(len(psd))]
+
+        if relative:
+            bp /= simps(psd, dx=freq_res)
+        return bp
 
 
 class ModelTrainer:
@@ -375,11 +435,14 @@ class ModelTrainer:
 
 # +
 experiments = [             
-                            {'sampler':'equal'},
-                           ]
+               #{'sampler':'equal'},
+               {'sampler':'equal', 'which_features':'welch']},
+              ]
 
 m = [KMeans(n_clusters=2), XGBClassifier(objective='binary:hinge', learning_rate = 0.01), KNeighborsClassifier()]
 s = [False, True, True]
+#m = [KNeighborsClassifier()]
+#s = [True]
 
 for i,model in enumerate(m):
     for kwords in experiments:
@@ -388,17 +451,24 @@ for i,model in enumerate(m):
         t.summarize()
 # -
 
-train = ChbDataset(mode='all',subject='chb14', sliding=False, which_features=['welch'], sampler='equal', multiclass=False,window_length=5)
+train = ChbDataset(mode='all',subject='chb10', sliding=False, which_features=['welch','PCA'], sampler='equal', multiclass=False,window_length=5)
 ad = train.all_data()
-train2 = ChbDataset(mode='all',subject='chb22',sliding=False, which_features=['welch'], sampler='equal', multiclass=False,window_length=5)
+train2 = ChbDataset(mode='all',subject='chb21',sliding=False, which_features=['welch'], sampler='equal', multiclass=False,window_length=5)
 ad2 = train2.all_data()
 
 plt.imshow(ad[0].T)
+plt.title('Subject 10')
+plt.xlabel('Time')
+plt.ylabel('PCA features')
 print(ad[0].shape)
 
 plt.imshow(ad2[0].T)
+plt.title('Misclassified Seizure')
+plt.xlabel('Time')
+plt.ylabel('Welch features')
 print(ad2[0].shape)
 
 plt.plot(ad[1].T)
+
 
 

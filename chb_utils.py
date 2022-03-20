@@ -60,7 +60,7 @@ def parse_summary_file(file):
         m = sample_rate_re.match(content)
         if m:
             sample_rate = int(m.group(1))
-            print(f"sample rate: {sample_rate}")
+            #print(f"sample rate: {sample_rate}")
         else:
             print("sample rate not found")
 
@@ -68,15 +68,15 @@ def parse_summary_file(file):
         channel_re = re.compile("Channel (\d+): (.+)\n")
         matches = channel_re.findall(content)
         channels = [m[1] for m in matches]
-        print(f"channels: {channels}")
+        #print(f"channels: {channels}")
         num_channels = len(channels)
-        print(f"found {num_channels} channels")
+        #print(f"found {num_channels} channels")
 
         # file names and seizure times
         file_re_no_capture = re.compile("File Name: .+\nFile Start Time: \d?\d:\d\d:\d\d\nFile End Time: \d?\d:\d\d:\d\d\nNumber of Seizures in File: \d+\n[Seizure \d*\s?Start Time:\s*\d+ seconds\nSeizure \d*\s?End Time:\s*\d+ seconds\n]*")
         file_re = re.compile("File Name: (.+)\nFile Start Time: (\d?\d:\d\d:\d\d)\nFile End Time: (\d?\d:\d\d:\d\d)\nNumber of Seizures in File: (\d+)\n(Seizure \d*\s?Start Time:\s*(\d+) seconds\nSeizure \d*\s?End Time:\s*(\d+) seconds\n)*")
         matches = file_re_no_capture.findall(content)
-        print(f"found {len(matches)} edf files")
+        #print(f"found {len(matches)} edf files")
         for match in matches:
             groups = file_re.match(match).groups()
             #print(match)
@@ -108,7 +108,7 @@ def parse_summary_file_chb24(file):
         m = sample_rate_re.match(content)
         if m:
             sample_rate = int(m.group(1))
-            print(f"sample rate: {sample_rate}")
+            #print(f"sample rate: {sample_rate}")
         else:
             print("sample rate not found")
 
@@ -116,15 +116,15 @@ def parse_summary_file_chb24(file):
         channel_re = re.compile("Channel (\d+): (.+)\n")
         matches = channel_re.findall(content)
         channels = [m[1] for m in matches]
-        print(f"channels: {channels}")
+        #print(f"channels: {channels}")
         num_channels = len(channels)
-        print(f"found {num_channels} channels")
+        #print(f"found {num_channels} channels")
 
         # file names and seizure times
         file_re_no_capture = re.compile("File Name: .+\nNumber of Seizures in File: \d+\n[Seizure \d*\s?Start Time:\s*\d+ seconds\nSeizure \d*\s?End Time:\s*\d+ seconds\n]*")
         file_re = re.compile("File Name: (.+)\nNumber of Seizures in File: (\d+)\n(Seizure \d*\s?Start Time:\s*(\d+) seconds\nSeizure \d*\s?End Time:\s*(\d+) seconds\n)*")
         matches = file_re_no_capture.findall(content)
-        print(f"found {len(matches)} edf files")
+        #print(f"found {len(matches)} edf files")
         for match in matches:
             groups = file_re.match(match).groups()
             #print(match)
