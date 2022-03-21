@@ -103,8 +103,8 @@ class ChbDataset(Dataset):
                                'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2',
                                'FZ-CZ', 'CZ-PZ', 'P7-T7', 'T7-FT9', 'FT9-FT10', 'FT10-T8', 'T8-P8']
 
-        #self.bands = [0.5,3.5,6.5,9.5,12.5,15.5,18.5,21.5,24.5]
-        self.bands = [0,4,8,13,30,60,90]
+        self.bands = [0.5,3.5,6.5,9.5,12.5,15.5,18.5,21.5,24.5]
+        #self.bands = [0,4,8,13,30,60,90]
 
         random.seed(1000)
         self.get_records() 
@@ -250,7 +250,7 @@ class ChbDataset(Dataset):
         data   = np.concatenate([pre.get_data(), window.get_data(), post.get_data()]) if self.sliding else window.get_data()
         label  = window.label
         if self.welch_features:
-            data = np.array(self.__welch_features(data))
+            data = np.array(self.__welch(data))
         #print(data.shape)
         if self.pca_features:
             data = self.__pca(data)
@@ -268,10 +268,11 @@ class ChbDataset(Dataset):
         
         return allX,allY
     
-    def __welch_features(self, sample):
+    def __welch(self, sample):
         p_f, p_Sxx = welch(sample, fs=self.sample_rate, axis=1, window=self.bands)
         p_SS = np.log1p(p_Sxx)
         arr = p_SS[:] / np.max(p_SS) if np.max(p_SS) != 0 else 1.0
+        #print(p_f)
         
         return arr
     
@@ -436,7 +437,7 @@ class ModelTrainer:
 # +
 experiments = [             
                #{'sampler':'equal'},
-               {'sampler':'equal', 'which_features':'welch']},
+               {'sampler':'equal', 'which_features':'welch'},
               ]
 
 m = [KMeans(n_clusters=2), XGBClassifier(objective='binary:hinge', learning_rate = 0.01), KNeighborsClassifier()]
@@ -451,7 +452,7 @@ for i,model in enumerate(m):
         t.summarize()
 # -
 
-train = ChbDataset(mode='all',subject='chb10', sliding=False, which_features=['welch','PCA'], sampler='equal', multiclass=False,window_length=5)
+train = ChbDataset(mode='all',subject='chb10', sliding=False, which_features=['welch'], sampler='equal', multiclass=False,window_length=5)
 ad = train.all_data()
 train2 = ChbDataset(mode='all',subject='chb21',sliding=False, which_features=['welch'], sampler='equal', multiclass=False,window_length=5)
 ad2 = train2.all_data()
