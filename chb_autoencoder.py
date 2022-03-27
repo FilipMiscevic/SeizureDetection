@@ -220,6 +220,25 @@ if run:
         plt.plot(reconstruction[0], color="orange")
         plt.show()
 
-
+# +
+if run:
+    run_name = 'basic_autoencoder_1024_1024_512_512'
+    model.load_state_dict(torch.load(f"runs/{run_name}_epoch10000.state"))
+    model.to(device)
+    for sample in loader:
+        sample = sample.to(device)
+        # Output of Autoencoder
+        reconstruction = model(sample).detach().cpu().numpy()
+        sample = sample.detach().cpu().numpy()
+        for i in range(len(sample)):
+            plt.plot(sample[i])
+            plt.plot(reconstruction[i], color="orange")
+            plt.savefig(f"reconstruction_{i}_{run_name}.png")
+            plt.show()
+        break
+            
+            
+        
+# -
 
 
